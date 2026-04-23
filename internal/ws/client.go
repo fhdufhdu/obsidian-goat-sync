@@ -7,19 +7,19 @@ import (
 )
 
 type Client struct {
-	hub       *Hub
-	conn      *websocket.Conn
-	writeChan chan []byte
-	readChan  chan []byte
-	handler   Handler
+	clientManager *ClientManager
+	conn          *websocket.Conn
+	writeChan     chan []byte
+	readChan      chan []byte
+	handler       Handler
 }
 
-func NewClient(hub *Hub, conn *websocket.Conn) *Client {
+func NewClient(clientManager *ClientManager, conn *websocket.Conn) *Client {
 	return &Client{
-		hub:       hub,
-		conn:      conn,
-		writeChan: make(chan []byte),
-		readChan:  make(chan []byte),
+		clientManager: clientManager,
+		conn:          conn,
+		writeChan:     make(chan []byte),
+		readChan:      make(chan []byte),
 	}
 }
 
@@ -47,5 +47,5 @@ func (c *Client) WritePump() {
 }
 
 func (c *Client) SendCloseSignal() {
-	c.hub.removeClientChan <- c
+	c.clientManager.removeClientChan <- c
 }

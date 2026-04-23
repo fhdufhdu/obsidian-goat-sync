@@ -15,7 +15,7 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
-var hub = ws.NewHub()
+var clientManager = ws.NewClientManager()
 
 func ConnectWebSocketClient(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -24,17 +24,15 @@ func ConnectWebSocketClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := ws.NewClient(hub, conn)
-	hub.AddClinet(client)
+	client := ws.NewClient(clientManager, conn)
+	clientManager.Add(client)
 
-	// Allow collection of old messages and prevent too many messages
-	// from filling the Websocket send buffer.
 	go client.ReadPump()
 	go client.WritePump()
 }
 
 func main() {
-	go hub.ManageClient()
+	go clientManager.Run()
 	http.HandleFunc("/", ConnectWebSocketClient)
 	err := http.ListenAndServe(":8080", nil)
 	if err != nil {

@@ -1,35 +1,35 @@
 package ws
 
-type Hub struct {
+type ClientManager struct {
 	clients          map[*Client]bool
 	addClientChan    chan *Client
 	removeClientChan chan *Client
 }
 
-func NewHub() *Hub {
-	return &Hub{
+func NewClientManager() *ClientManager {
+	return &ClientManager{
 		clients:          make(map[*Client]bool),
 		addClientChan:    make(chan *Client),
 		removeClientChan: make(chan *Client),
 	}
 }
 
-func (h *Hub) ManageClient() {
+func (cm *ClientManager) Run() {
 	for {
 		select {
-		case client := <-h.addClientChan:
-			h.clients[client] = true
-		case client := <-h.removeClientChan:
-			delete(h.clients, client)
+		case client := <-cm.addClientChan:
+			cm.clients[client] = true
+		case client := <-cm.removeClientChan:
+			delete(cm.clients, client)
 			client.conn.Close()
 		}
 	}
 }
 
-func (h *Hub) AddClinet(client *Client) {
-	h.addClientChan <- client
+func (cm *ClientManager) Add(client *Client) {
+	cm.addClientChan <- client
 }
 
-func (h *Hub) RemoveClient(client *Client) {
-	h.removeClientChan <- client
+func (cm *ClientManager) Remove(client *Client) {
+	cm.removeClientChan <- client
 }

@@ -4,18 +4,21 @@ import (
 	"log"
 	"net/http"
 
+	"obsidian-goat-sync/internal/sqlite"
 	"obsidian-goat-sync/internal/ws"
 
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true },
-}
+var (
+	upgrader = websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin:     func(r *http.Request) bool { return true },
+	}
 
-var clientManager = ws.NewClientManager()
+	clientManager = ws.NewClientManager()
+)
 
 func ConnectWebSocketClient(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -32,10 +35,17 @@ func ConnectWebSocketClient(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	conn, connErr := sqlite.Open("./sync.db")
+	if connErr != nil {
+		log.Fatalf("Server failed to start: %v", connErr)
+		return
+	}
+	defer conn.Close()
+
 	go clientManager.Run()
 	http.HandleFunc("/", ConnectWebSocketClient)
-	err := http.ListenAndServe(":8080", nil)
-	if err != nil {
-		log.Fatalf("Server failed to start: %v", err)
+	httpErr := http.ListenAndServe(":8080", nil)
+	if httpErr != nil {
+		log.Fatalf("Server failed to start: %v", httpErr)
 	}
 }

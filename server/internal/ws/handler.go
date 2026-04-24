@@ -3,7 +3,10 @@ package ws
 import (
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"log"
+	"sort"
+	"strings"
 
 	"obsidian-goat-sync/internal/db"
 	"obsidian-goat-sync/internal/storage"
@@ -75,6 +78,8 @@ func (h *Handler) handleSyncInit(client *Client, msg IncomingMessage) {
 		clientPaths[f.Path] = true
 	}
 
+	unsupportedSyncInitActions := map[string]struct{}{}
+
 	var toDownload []DownloadEntry
 	var toUpdateMeta []UpdateMetaEntry
 	var conflicts []SyncConflictEntry
@@ -117,13 +122,16 @@ func (h *Handler) handleSyncInit(client *Client, msg IncomingMessage) {
 
 		switch result.Action {
 		case syncpkg.ActionToUpload:
+			unsupportedSyncInitActions["toUpload"] = struct{}{}
 		case syncpkg.ActionToUpdate:
+			unsupportedSyncInitActions["toUpdate"] = struct{}{}
 		case syncpkg.ActionToDownload:
 			entry, ok := h.makeDownloadEntry(msg.Vault, sf)
 			if ok {
 				toDownload = append(toDownload, entry)
 			}
 		case syncpkg.ActionToDelete:
+			unsupportedSyncInitActions["toDelete"] = struct{}{}
 		case syncpkg.ActionToUpdateMeta:
 			if sfExists {
 				toUpdateMeta = append(toUpdateMeta, UpdateMetaEntry{
@@ -169,6 +177,23 @@ func (h *Handler) handleSyncInit(client *Client, msg IncomingMessage) {
 		}
 	}
 
+	var unsupportedActions []string
+	for action := range unsupportedSyncInitActions {
+		unsupportedActions = append(unsupportedActions, action)
+	}
+	if len(unsupportedActions) > 0 {
+		sort.Strings(unsupportedActions)
+		client.SendMessage(OutgoingMessage{
+			Type:         "sync_result",
+			Vault:        msg.Vault,
+			ToDownload:   toDownload,
+			ToUpdateMeta: toUpdateMeta,
+			Conflicts:    conflicts,
+			Error:        "legacy sync_init actions not yet supported: " + strings.Join(unsupportedActions, ", "),
+		})
+		return
+	}
+
 	client.SendMessage(OutgoingMessage{
 		Type:         "sync_result",
 		Vault:        msg.Vault,
@@ -183,7 +208,11 @@ func (h *Handler) handleFileCheck(client *Client, msg IncomingMessage) {
 	serverExists := err == nil
 	serverIsDeleted := serverExists && sf.IsDeleted
 
-	baseVersion, baseHash, currentHash := protocolPayloadValues(msg)
+	baseVersion, baseHash, currentHash, err := protocolPayloadValues(msg, false, false)
+	if err != nil {
+		client.SendMessage(OutgoingMessage{Type: "file_check_result", Path: msg.Path, Error: err.Error()})
+		return
+	}
 
 	initFile := db.SyncInitFile{
 		Path:              msg.Path,
@@ -263,6 +292,12 @@ func (h *Handler) handleFileCreate(client *Client, msg IncomingMessage) {
 	sf, err := h.queries.GetFile(msg.Vault, msg.Path)
 	serverExists := err == nil
 
+	_, _, currentClientHash, err := protocolPayloadValues(msg, false, true)
+	if err != nil {
+		client.SendMessage(OutgoingMessage{Type: "file_create_result", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
+		return
+	}
+
 	optResult := syncpkg.CheckFileCreate(sf, serverExists)
 
 	if !optResult.OK {
@@ -288,7 +323,6 @@ func (h *Handler) handleFileCreate(client *Client, msg IncomingMessage) {
 	}
 
 	fileContent := decodeContent(msg.Content, msg.Encoding)
-	_, _, currentClientHash := protocolPayloadValues(msg)
 	if err := h.storage.WriteFile(msg.Vault, msg.Path, fileContent); err != nil {
 		client.SendMessage(OutgoingMessage{Type: "file_create_result", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
 		return
@@ -327,8 +361,13 @@ func (h *Handler) handleFileUpdate(client *Client, msg IncomingMessage) {
 		return
 	}
 
+	baseVersion, _, currentClientHash, err := protocolPayloadValues(msg, true, true)
+	if err != nil {
+		client.SendMessage(OutgoingMessage{Type: "file_update_result", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
+		return
+	}
+
 	var prevVersion int64
-	baseVersion, _, currentClientHash := protocolPayloadValues(msg)
 	if baseVersion != nil {
 		prevVersion = *baseVersion
 	}
@@ -402,15 +441,20 @@ func (h *Handler) handleFileUpdate(client *Client, msg IncomingMessage) {
 }
 
 func (h *Handler) handleFileDelete(client *Client, msg IncomingMessage) {
-	sf, err := h.queries.GetFile(msg.Vault, msg.Path)
+	sf, fileErr := h.queries.GetFile(msg.Vault, msg.Path)
+
+	baseVersion, _, _, err := protocolPayloadValues(msg, true, false)
+	if err != nil {
+		client.SendMessage(OutgoingMessage{Type: "file_delete_result", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
+		return
+	}
 
 	var prevVersion int64
-	baseVersion, _, _ := protocolPayloadValues(msg)
 	if baseVersion != nil {
 		prevVersion = *baseVersion
 	}
 
-	optResult := syncpkg.CheckFileDelete(sf, err, prevVersion)
+	optResult := syncpkg.CheckFileDelete(sf, fileErr, prevVersion)
 
 	if optResult.Noop {
 		client.SendMessage(OutgoingMessage{
@@ -483,8 +527,13 @@ func (h *Handler) handleConflictResolveUpdate(client *Client, msg IncomingMessag
 		return
 	}
 
+	baseVersion, _, currentClientHash, err := protocolPayloadValues(msg, true, true)
+	if err != nil {
+		client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
+		return
+	}
+
 	var prevVersion int64
-	baseVersion, _, currentClientHash := protocolPayloadValues(msg)
 	if baseVersion != nil {
 		prevVersion = *baseVersion
 	}
@@ -558,15 +607,20 @@ func (h *Handler) handleConflictResolveUpdate(client *Client, msg IncomingMessag
 }
 
 func (h *Handler) handleConflictResolveDelete(client *Client, msg IncomingMessage) {
-	sf, err := h.queries.GetFile(msg.Vault, msg.Path)
+	sf, fileErr := h.queries.GetFile(msg.Vault, msg.Path)
+
+	baseVersion, _, _, err := protocolPayloadValues(msg, true, false)
+	if err != nil {
+		client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
+		return
+	}
 
 	var prevVersion int64
-	baseVersion, _, _ := protocolPayloadValues(msg)
 	if baseVersion != nil {
 		prevVersion = *baseVersion
 	}
 
-	optResult := syncpkg.CheckFileDelete(sf, err, prevVersion)
+	optResult := syncpkg.CheckFileDelete(sf, fileErr, prevVersion)
 
 	if optResult.Noop {
 		client.SendMessage(OutgoingMessage{
@@ -619,11 +673,19 @@ func (h *Handler) handleConflictResolveDelete(client *Client, msg IncomingMessag
 	})
 }
 
-func protocolPayloadValues(msg IncomingMessage) (baseVersion *int64, baseHash string, localHash string) {
-	if msg.File != nil {
-		return msg.File.BaseVersion, msg.File.BaseHash, msg.File.LocalHash
+func protocolPayloadValues(msg IncomingMessage, requireBaseVersion, requireLocalHash bool) (baseVersion *int64, baseHash string, localHash string, err error) {
+	if msg.File == nil {
+		return nil, "", "", errors.New("missing file payload")
 	}
-	return nil, "", ""
+
+	if requireBaseVersion && msg.File.BaseVersion == nil {
+		return nil, msg.File.BaseHash, msg.File.LocalHash, errors.New("missing file.baseVersion")
+	}
+	if requireLocalHash && msg.File.LocalHash == "" {
+		return msg.File.BaseVersion, msg.File.BaseHash, "", errors.New("missing file.localHash")
+	}
+
+	return msg.File.BaseVersion, msg.File.BaseHash, msg.File.LocalHash, nil
 }
 
 func (h *Handler) makeDownloadEntry(vault string, sf db.File) (DownloadEntry, bool) {

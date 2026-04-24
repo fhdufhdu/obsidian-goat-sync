@@ -3,6 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"obsidian-goat-sync/internal/db"
@@ -109,8 +110,11 @@ func TestHandleSyncInit_NoPrev_NoServer(t *testing.T) {
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Type != "sync_result" {
-		t.Fatalf("expected sync_result, got %s", resp.Type)
+	if !strings.Contains(resp.Error, "legacy sync_init actions not yet supported") {
+		t.Fatalf("expected legacy compatibility error, got: %q", resp.Error)
+	}
+	if !strings.Contains(resp.Error, "toUpload") {
+		t.Fatalf("expected toUpload in error list, got: %q", resp.Error)
 	}
 	if len(resp.ToDownload) != 0 {
 		t.Errorf("expected no downloads, got %v", resp.ToDownload)
@@ -120,6 +124,102 @@ func TestHandleSyncInit_NoPrev_NoServer(t *testing.T) {
 	}
 	if len(resp.Conflicts) != 0 {
 		t.Errorf("expected no conflicts, got %v", resp.Conflicts)
+	}
+}
+
+func TestHandleSyncInit_WithPrev_SameVersion_DiffHash_ToUpdate(t *testing.T) {
+	h, q, s, _ := setupHandler(t)
+	q.CreateVault("personal")
+	s.WriteFile("personal", "notes/hello.md", []byte("content"))
+	q.CreateFile("personal", "notes/hello.md", "hash1")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:  "sync_init",
+		Vault: "personal",
+		Files: []FilePayload{
+			{Path: "notes/hello.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "clienthash"},
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if !strings.Contains(resp.Error, "legacy sync_init actions not yet supported") {
+		t.Fatalf("expected legacy compatibility error, got: %q", resp.Error)
+	}
+	if !strings.Contains(resp.Error, "toUpdate") {
+		t.Fatalf("expected toUpdate in error list, got: %q", resp.Error)
+	}
+	if len(resp.ToDownload) != 0 {
+		t.Errorf("expected toUpdate-like path not in download/conflict buckets, got download=%v", resp.ToDownload)
+	}
+	if len(resp.Conflicts) != 0 {
+		t.Errorf("expected toUpdate-like path not in download/conflict buckets, got conflicts=%v", resp.Conflicts)
+	}
+}
+
+func TestHandleSyncInit_Tombstone_ToDelete(t *testing.T) {
+	h, q, s, _ := setupHandler(t)
+	q.CreateVault("personal")
+	s.WriteFile("personal", "notes/old.md", []byte("old content"))
+	q.CreateFile("personal", "notes/old.md", "hash1")
+	q.DeleteFile("personal", "notes/old.md")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:  "sync_init",
+		Vault: "personal",
+		Files: []FilePayload{
+			{Path: "notes/old.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash1"},
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if !strings.Contains(resp.Error, "legacy sync_init actions not yet supported") {
+		t.Fatalf("expected legacy compatibility error, got: %q", resp.Error)
+	}
+	if !strings.Contains(resp.Error, "toDelete") {
+		t.Fatalf("expected toDelete in error list, got: %q", resp.Error)
+	}
+	if len(resp.Conflicts) != 0 {
+		t.Errorf("expected tombstone cleanup with no conflicts, got %v", resp.Conflicts)
+	}
+}
+
+func TestHandleFileCreate_NoFilePayload(t *testing.T) {
+	h, q, s, _ := setupHandler(t)
+	q.CreateVault("personal")
+	s.CreateVaultDir("personal")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:    "file_create",
+		Vault:   "personal",
+		Path:    "notes/new.md",
+		Content: "# New Note",
+	}))
+
+	resp := readResponse(t, c)
+	if resp.Type != "file_create_result" {
+		t.Fatalf("expected file_create_result, got %s", resp.Type)
+	}
+	if resp.Ok == nil || *resp.Ok {
+		t.Fatal("expected ok=false without file payload")
+	}
+	if resp.Error == "" {
+		t.Fatal("expected clear error when file payload is missing")
+	}
+
+	if _, err := s.ReadFile("personal", "notes/new.md"); err == nil {
+		t.Fatal("expected file not written when file payload is missing")
+	}
+	if _, err := q.GetFile("personal", "notes/new.md"); err == nil {
+		t.Fatal("expected no db row created when file payload is missing")
 	}
 }
 
@@ -195,29 +295,6 @@ func TestHandleSyncInit_WithPrev_SameVersion_SameHash_Skip(t *testing.T) {
 	}
 }
 
-func TestHandleSyncInit_WithPrev_SameVersion_DiffHash_ToUpdate(t *testing.T) {
-	h, q, s, _ := setupHandler(t)
-	q.CreateVault("personal")
-	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "hash1")
-
-	c := makeClient(h.hub, "personal")
-	h.hub.Register <- c
-
-	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "sync_init",
-		Vault: "personal",
-		Files: []FilePayload{
-			{Path: "notes/hello.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "clienthash"},
-		},
-	}))
-
-	resp := readResponse(t, c)
-	if len(resp.ToDownload) != 0 || len(resp.Conflicts) != 0 {
-		t.Errorf("expected toUpdate-like path not in download/conflict buckets, got download=%v conflicts=%v", resp.ToDownload, resp.Conflicts)
-	}
-}
-
 func TestHandleSyncInit_WithPrev_OlderVersion_SameClientHash_ToUpdateMeta(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
@@ -284,30 +361,6 @@ func TestHandleSyncInit_ServerOnlyFile_ToDownload(t *testing.T) {
 	resp := readResponse(t, c)
 	if len(resp.ToDownload) != 1 || resp.ToDownload[0].Path != "notes/server-only.md" {
 		t.Errorf("expected server-only file in toDownload, got %v", resp.ToDownload)
-	}
-}
-
-func TestHandleSyncInit_Tombstone_ToDelete(t *testing.T) {
-	h, q, s, _ := setupHandler(t)
-	q.CreateVault("personal")
-	s.WriteFile("personal", "notes/old.md", []byte("old content"))
-	q.CreateFile("personal", "notes/old.md", "hash1")
-	q.DeleteFile("personal", "notes/old.md")
-
-	c := makeClient(h.hub, "personal")
-	h.hub.Register <- c
-
-	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "sync_init",
-		Vault: "personal",
-		Files: []FilePayload{
-			{Path: "notes/old.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash1"},
-		},
-	}))
-
-	resp := readResponse(t, c)
-	if len(resp.Conflicts) != 0 {
-		t.Errorf("expected tombstone cleanup with no conflicts, got %v", resp.Conflicts)
 	}
 }
 

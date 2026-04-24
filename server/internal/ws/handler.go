@@ -75,19 +75,16 @@ func (h *Handler) handleSyncInit(client *Client, msg IncomingMessage) {
 		clientPaths[f.Path] = true
 	}
 
-	var toUpload []string
-	var toUpdate []string
 	var toDownload []DownloadEntry
-	var toDelete []string
 	var toUpdateMeta []UpdateMetaEntry
 	var conflicts []SyncConflictEntry
 
 	for _, cf := range msg.Files {
 		initFile := db.SyncInitFile{
 			Path:              cf.Path,
-			PrevServerVersion: cf.PrevServerVersion,
-			PrevServerHash:    cf.PrevServerHash,
-			CurrentClientHash: cf.CurrentClientHash,
+			PrevServerVersion: cf.BaseVersion,
+			PrevServerHash:    cf.BaseHash,
+			CurrentClientHash: cf.LocalHash,
 		}
 
 		sf, sfExists := serverMap[cf.Path]
@@ -120,28 +117,25 @@ func (h *Handler) handleSyncInit(client *Client, msg IncomingMessage) {
 
 		switch result.Action {
 		case syncpkg.ActionToUpload:
-			toUpload = append(toUpload, cf.Path)
 		case syncpkg.ActionToUpdate:
-			toUpdate = append(toUpdate, cf.Path)
 		case syncpkg.ActionToDownload:
 			entry, ok := h.makeDownloadEntry(msg.Vault, sf)
 			if ok {
 				toDownload = append(toDownload, entry)
 			}
 		case syncpkg.ActionToDelete:
-			toDelete = append(toDelete, cf.Path)
 		case syncpkg.ActionToUpdateMeta:
 			if sfExists {
 				toUpdateMeta = append(toUpdateMeta, UpdateMetaEntry{
-					Path:                 cf.Path,
-					CurrentServerVersion: sf.Version,
-					CurrentServerHash:    sf.Hash,
+					Path:          cf.Path,
+					ServerVersion: sf.Version,
+					ServerHash:    sf.Hash,
 				})
 			} else if tombstoneExists {
 				toUpdateMeta = append(toUpdateMeta, UpdateMetaEntry{
-					Path:                 cf.Path,
-					CurrentServerVersion: tombstoneFile.Version,
-					CurrentServerHash:    tombstoneFile.Hash,
+					Path:          cf.Path,
+					ServerVersion: tombstoneFile.Version,
+					ServerHash:    tombstoneFile.Hash,
 				})
 			}
 		case syncpkg.ActionConflict:
@@ -152,13 +146,14 @@ func (h *Handler) handleSyncInit(client *Client, msg IncomingMessage) {
 				}
 				enc, encoded := encodeContent(content)
 				conflicts = append(conflicts, SyncConflictEntry{
-					Path:                 cf.Path,
-					PrevServerVersion:    cf.PrevServerVersion,
-					CurrentClientHash:    cf.CurrentClientHash,
-					CurrentServerVersion: sf.Version,
-					CurrentServerHash:    sf.Hash,
-					CurrentServerContent: encoded,
-					Encoding:             enc,
+					Path:          cf.Path,
+					BaseVersion:   cf.BaseVersion,
+					LocalHash:     cf.LocalHash,
+					ServerVersion: sf.Version,
+					ServerHash:    sf.Hash,
+					ServerContent: encoded,
+					IsDeleted:     serverIsDeleted,
+					Encoding:      enc,
 				})
 			}
 		case syncpkg.ActionSkip:
@@ -177,10 +172,7 @@ func (h *Handler) handleSyncInit(client *Client, msg IncomingMessage) {
 	client.SendMessage(OutgoingMessage{
 		Type:         "sync_result",
 		Vault:        msg.Vault,
-		ToUpload:     toUpload,
-		ToUpdate:     toUpdate,
 		ToDownload:   toDownload,
-		ToDelete:     toDelete,
 		ToUpdateMeta: toUpdateMeta,
 		Conflicts:    conflicts,
 	})
@@ -191,11 +183,13 @@ func (h *Handler) handleFileCheck(client *Client, msg IncomingMessage) {
 	serverExists := err == nil
 	serverIsDeleted := serverExists && sf.IsDeleted
 
+	baseVersion, baseHash, currentHash := protocolPayloadValues(msg)
+
 	initFile := db.SyncInitFile{
 		Path:              msg.Path,
-		PrevServerVersion: msg.PrevServerVersion,
-		PrevServerHash:    msg.PrevServerHash,
-		CurrentClientHash: msg.CurrentClientHash,
+		PrevServerVersion: baseVersion,
+		PrevServerHash:    baseHash,
+		CurrentClientHash: currentHash,
 	}
 
 	var sfForClassify db.File
@@ -215,8 +209,11 @@ func (h *Handler) handleFileCheck(client *Client, msg IncomingMessage) {
 		resp.Action = "up-to-date"
 	case syncpkg.ActionToUpdateMeta:
 		resp.Action = "update-meta"
-		resp.CurrentServerVersion = sf.Version
-		resp.CurrentServerHash = sf.Hash
+		resp.Meta = &ServerMetaPayload{
+			Path:          msg.Path,
+			ServerVersion: sf.Version,
+			ServerHash:    sf.Hash,
+		}
 	case syncpkg.ActionToDownload:
 		content, rerr := h.storage.ReadFile(msg.Vault, msg.Path)
 		if rerr != nil {
@@ -227,8 +224,11 @@ func (h *Handler) handleFileCheck(client *Client, msg IncomingMessage) {
 		resp.Action = "download"
 		resp.Content = encoded
 		resp.Encoding = enc
-		resp.CurrentServerVersion = sf.Version
-		resp.CurrentServerHash = sf.Hash
+		resp.Meta = &ServerMetaPayload{
+			Path:          msg.Path,
+			ServerVersion: sf.Version,
+			ServerHash:    sf.Hash,
+		}
 	case syncpkg.ActionConflict:
 		content, rerr := h.storage.ReadFile(msg.Vault, msg.Path)
 		if rerr != nil {
@@ -238,14 +238,20 @@ func (h *Handler) handleFileCheck(client *Client, msg IncomingMessage) {
 		enc, encoded := encodeContent(content)
 		resp.Action = "conflict"
 		resp.Conflict = &ConflictInfo{
-			CurrentServerVersion: sf.Version,
-			CurrentServerHash:    sf.Hash,
-			CurrentServerContent: encoded,
-			Encoding:             enc,
+			ServerVersion: sf.Version,
+			ServerHash:    sf.Hash,
+			ServerContent: encoded,
+			IsDeleted:     serverIsDeleted,
+			Encoding:      enc,
 		}
 	case syncpkg.ActionToDelete:
 		resp.Action = "deleted"
-		resp.CurrentServerVersion = sf.Version
+		resp.Meta = &ServerMetaPayload{
+			Path:          msg.Path,
+			ServerVersion: sf.Version,
+			ServerHash:    sf.Hash,
+			IsDeleted:     true,
+		}
 	default:
 		resp.Action = "up-to-date"
 	}
@@ -271,16 +277,18 @@ func (h *Handler) handleFileCreate(client *Client, msg IncomingMessage) {
 			Path: msg.Path,
 			Ok:   boolPtr(false),
 			Conflict: &ConflictInfo{
-				CurrentServerVersion: sf.Version,
-				CurrentServerHash:    sf.Hash,
-				CurrentServerContent: encoded,
-				Encoding:             enc,
+				ServerVersion: sf.Version,
+				ServerHash:    sf.Hash,
+				ServerContent: encoded,
+				IsDeleted:     sf.IsDeleted,
+				Encoding:      enc,
 			},
 		})
 		return
 	}
 
 	fileContent := decodeContent(msg.Content, msg.Encoding)
+	_, _, currentClientHash := protocolPayloadValues(msg)
 	if err := h.storage.WriteFile(msg.Vault, msg.Path, fileContent); err != nil {
 		client.SendMessage(OutgoingMessage{Type: "file_create_result", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
 		return
@@ -288,9 +296,9 @@ func (h *Handler) handleFileCreate(client *Client, msg IncomingMessage) {
 
 	var newFile db.File
 	if serverExists && sf.IsDeleted {
-		newFile, err = h.queries.CreateFileFromTombstone(msg.Vault, msg.Path, msg.CurrentClientHash, sf.Version)
+		newFile, err = h.queries.CreateFileFromTombstone(msg.Vault, msg.Path, currentClientHash, sf.Version)
 	} else {
-		newFile, err = h.queries.CreateFile(msg.Vault, msg.Path, msg.CurrentClientHash)
+		newFile, err = h.queries.CreateFile(msg.Vault, msg.Path, currentClientHash)
 	}
 	if err != nil {
 		client.SendMessage(OutgoingMessage{Type: "file_create_result", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
@@ -298,11 +306,15 @@ func (h *Handler) handleFileCreate(client *Client, msg IncomingMessage) {
 	}
 
 	client.SendMessage(OutgoingMessage{
-		Type:                 "file_create_result",
-		Path:                 msg.Path,
-		Ok:                   boolPtr(true),
-		CurrentServerVersion: newFile.Version,
-		CurrentServerHash:    newFile.Hash,
+		Type: "file_create_result",
+		Path: msg.Path,
+		Ok:   boolPtr(true),
+		Meta: &ServerMetaPayload{
+			Path:          msg.Path,
+			ServerVersion: newFile.Version,
+			ServerHash:    newFile.Hash,
+			IsDeleted:     false,
+		},
 	})
 }
 
@@ -316,11 +328,12 @@ func (h *Handler) handleFileUpdate(client *Client, msg IncomingMessage) {
 	}
 
 	var prevVersion int64
-	if msg.PrevServerVersion != nil {
-		prevVersion = *msg.PrevServerVersion
+	baseVersion, _, currentClientHash := protocolPayloadValues(msg)
+	if baseVersion != nil {
+		prevVersion = *baseVersion
 	}
 
-	optResult := syncpkg.CheckFileUpdate(sf, serverExists, prevVersion, msg.CurrentClientHash)
+	optResult := syncpkg.CheckFileUpdate(sf, serverExists, prevVersion, currentClientHash)
 
 	if !optResult.OK {
 		if optResult.ErrNoRows {
@@ -338,10 +351,11 @@ func (h *Handler) handleFileUpdate(client *Client, msg IncomingMessage) {
 			Path: msg.Path,
 			Ok:   boolPtr(false),
 			Conflict: &ConflictInfo{
-				CurrentServerVersion: sf.Version,
-				CurrentServerHash:    sf.Hash,
-				CurrentServerContent: encoded,
-				Encoding:             enc,
+				ServerVersion: sf.Version,
+				ServerHash:    sf.Hash,
+				ServerContent: encoded,
+				IsDeleted:     sf.IsDeleted,
+				Encoding:      enc,
 			},
 		})
 		return
@@ -349,12 +363,16 @@ func (h *Handler) handleFileUpdate(client *Client, msg IncomingMessage) {
 
 	if optResult.Noop {
 		client.SendMessage(OutgoingMessage{
-			Type:                 "file_update_result",
-			Path:                 msg.Path,
-			Ok:                   boolPtr(true),
-			Noop:                 true,
-			CurrentServerVersion: sf.Version,
-			CurrentServerHash:    sf.Hash,
+			Type:   "file_update_result",
+			Path:   msg.Path,
+			Ok:     boolPtr(true),
+			Action: "noop",
+			Meta: &ServerMetaPayload{
+				Path:          msg.Path,
+				ServerVersion: sf.Version,
+				ServerHash:    sf.Hash,
+				IsDeleted:     sf.IsDeleted,
+			},
 		})
 		return
 	}
@@ -365,18 +383,21 @@ func (h *Handler) handleFileUpdate(client *Client, msg IncomingMessage) {
 		return
 	}
 
-	newFile, uerr := h.queries.UpdateFile(msg.Vault, msg.Path, msg.CurrentClientHash)
+	newFile, uerr := h.queries.UpdateFile(msg.Vault, msg.Path, currentClientHash)
 	if uerr != nil {
 		client.SendMessage(OutgoingMessage{Type: "file_update_result", Path: msg.Path, Ok: boolPtr(false), Error: uerr.Error()})
 		return
 	}
 
 	client.SendMessage(OutgoingMessage{
-		Type:                 "file_update_result",
-		Path:                 msg.Path,
-		Ok:                   boolPtr(true),
-		CurrentServerVersion: newFile.Version,
-		CurrentServerHash:    newFile.Hash,
+		Type: "file_update_result",
+		Path: msg.Path,
+		Ok:   boolPtr(true),
+		Meta: &ServerMetaPayload{
+			Path:          msg.Path,
+			ServerVersion: newFile.Version,
+			ServerHash:    newFile.Hash,
+		},
 	})
 }
 
@@ -384,8 +405,9 @@ func (h *Handler) handleFileDelete(client *Client, msg IncomingMessage) {
 	sf, err := h.queries.GetFile(msg.Vault, msg.Path)
 
 	var prevVersion int64
-	if msg.PrevServerVersion != nil {
-		prevVersion = *msg.PrevServerVersion
+	baseVersion, _, _ := protocolPayloadValues(msg)
+	if baseVersion != nil {
+		prevVersion = *baseVersion
 	}
 
 	optResult := syncpkg.CheckFileDelete(sf, err, prevVersion)
@@ -411,10 +433,11 @@ func (h *Handler) handleFileDelete(client *Client, msg IncomingMessage) {
 			Path: msg.Path,
 			Ok:   boolPtr(false),
 			Conflict: &ConflictInfo{
-				CurrentServerVersion: sf.Version,
-				CurrentServerHash:    sf.Hash,
-				CurrentServerContent: encoded,
-				Encoding:             enc,
+				ServerVersion: sf.Version,
+				ServerHash:    sf.Hash,
+				ServerContent: encoded,
+				IsDeleted:     sf.IsDeleted,
+				Encoding:      enc,
 			},
 		})
 		return
@@ -431,10 +454,15 @@ func (h *Handler) handleFileDelete(client *Client, msg IncomingMessage) {
 	}
 
 	client.SendMessage(OutgoingMessage{
-		Type:                 "file_delete_result",
-		Path:                 msg.Path,
-		Ok:                   boolPtr(true),
-		CurrentServerVersion: newFile.Version,
+		Type: "file_delete_result",
+		Path: msg.Path,
+		Ok:   boolPtr(true),
+		Meta: &ServerMetaPayload{
+			Path:          msg.Path,
+			ServerVersion: newFile.Version,
+			ServerHash:    newFile.Hash,
+			IsDeleted:     newFile.IsDeleted,
+		},
 	})
 }
 
@@ -456,11 +484,12 @@ func (h *Handler) handleConflictResolveUpdate(client *Client, msg IncomingMessag
 	}
 
 	var prevVersion int64
-	if msg.PrevServerVersion != nil {
-		prevVersion = *msg.PrevServerVersion
+	baseVersion, _, currentClientHash := protocolPayloadValues(msg)
+	if baseVersion != nil {
+		prevVersion = *baseVersion
 	}
 
-	optResult := syncpkg.CheckFileUpdate(sf, serverExists, prevVersion, msg.CurrentClientHash)
+	optResult := syncpkg.CheckFileUpdate(sf, serverExists, prevVersion, currentClientHash)
 
 	if !optResult.OK {
 		if optResult.ErrNoRows {
@@ -478,10 +507,11 @@ func (h *Handler) handleConflictResolveUpdate(client *Client, msg IncomingMessag
 			Path: msg.Path,
 			Ok:   boolPtr(false),
 			Conflict: &ConflictInfo{
-				CurrentServerVersion: sf.Version,
-				CurrentServerHash:    sf.Hash,
-				CurrentServerContent: encoded,
-				Encoding:             enc,
+				ServerVersion: sf.Version,
+				ServerHash:    sf.Hash,
+				ServerContent: encoded,
+				IsDeleted:     sf.IsDeleted,
+				Encoding:      enc,
 			},
 		})
 		return
@@ -489,11 +519,15 @@ func (h *Handler) handleConflictResolveUpdate(client *Client, msg IncomingMessag
 
 	if optResult.Noop {
 		client.SendMessage(OutgoingMessage{
-			Type:                 "conflict_resolve_result",
-			Path:                 msg.Path,
-			Ok:                   boolPtr(true),
-			CurrentServerVersion: sf.Version,
-			CurrentServerHash:    sf.Hash,
+			Type: "conflict_resolve_result",
+			Path: msg.Path,
+			Ok:   boolPtr(true),
+			Meta: &ServerMetaPayload{
+				Path:          msg.Path,
+				ServerVersion: sf.Version,
+				ServerHash:    sf.Hash,
+				IsDeleted:     sf.IsDeleted,
+			},
 		})
 		return
 	}
@@ -504,18 +538,22 @@ func (h *Handler) handleConflictResolveUpdate(client *Client, msg IncomingMessag
 		return
 	}
 
-	newFile, uerr := h.queries.UpdateFile(msg.Vault, msg.Path, msg.CurrentClientHash)
+	newFile, uerr := h.queries.UpdateFile(msg.Vault, msg.Path, currentClientHash)
 	if uerr != nil {
 		client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: uerr.Error()})
 		return
 	}
 
 	client.SendMessage(OutgoingMessage{
-		Type:                 "conflict_resolve_result",
-		Path:                 msg.Path,
-		Ok:                   boolPtr(true),
-		CurrentServerVersion: newFile.Version,
-		CurrentServerHash:    newFile.Hash,
+		Type: "conflict_resolve_result",
+		Path: msg.Path,
+		Ok:   boolPtr(true),
+		Meta: &ServerMetaPayload{
+			Path:          msg.Path,
+			ServerVersion: newFile.Version,
+			ServerHash:    newFile.Hash,
+			IsDeleted:     newFile.IsDeleted,
+		},
 	})
 }
 
@@ -523,8 +561,9 @@ func (h *Handler) handleConflictResolveDelete(client *Client, msg IncomingMessag
 	sf, err := h.queries.GetFile(msg.Vault, msg.Path)
 
 	var prevVersion int64
-	if msg.PrevServerVersion != nil {
-		prevVersion = *msg.PrevServerVersion
+	baseVersion, _, _ := protocolPayloadValues(msg)
+	if baseVersion != nil {
+		prevVersion = *baseVersion
 	}
 
 	optResult := syncpkg.CheckFileDelete(sf, err, prevVersion)
@@ -550,10 +589,11 @@ func (h *Handler) handleConflictResolveDelete(client *Client, msg IncomingMessag
 			Path: msg.Path,
 			Ok:   boolPtr(false),
 			Conflict: &ConflictInfo{
-				CurrentServerVersion: sf.Version,
-				CurrentServerHash:    sf.Hash,
-				CurrentServerContent: encoded,
-				Encoding:             enc,
+				ServerVersion: sf.Version,
+				ServerHash:    sf.Hash,
+				ServerContent: encoded,
+				IsDeleted:     sf.IsDeleted,
+				Encoding:      enc,
 			},
 		})
 		return
@@ -567,11 +607,23 @@ func (h *Handler) handleConflictResolveDelete(client *Client, msg IncomingMessag
 	}
 
 	client.SendMessage(OutgoingMessage{
-		Type:                 "conflict_resolve_result",
-		Path:                 msg.Path,
-		Ok:                   boolPtr(true),
-		CurrentServerVersion: newFile.Version,
+		Type: "conflict_resolve_result",
+		Path: msg.Path,
+		Ok:   boolPtr(true),
+		Meta: &ServerMetaPayload{
+			Path:          msg.Path,
+			ServerVersion: newFile.Version,
+			ServerHash:    newFile.Hash,
+			IsDeleted:     newFile.IsDeleted,
+		},
 	})
+}
+
+func protocolPayloadValues(msg IncomingMessage) (baseVersion *int64, baseHash string, localHash string) {
+	if msg.File != nil {
+		return msg.File.BaseVersion, msg.File.BaseHash, msg.File.LocalHash
+	}
+	return nil, "", ""
 }
 
 func (h *Handler) makeDownloadEntry(vault string, sf db.File) (DownloadEntry, bool) {
@@ -581,11 +633,11 @@ func (h *Handler) makeDownloadEntry(vault string, sf db.File) (DownloadEntry, bo
 	}
 	enc, encoded := encodeContent(content)
 	return DownloadEntry{
-		Path:                 sf.Path,
-		Content:              encoded,
-		CurrentServerVersion: sf.Version,
-		CurrentServerHash:    sf.Hash,
-		Encoding:             enc,
+		Path:          sf.Path,
+		Content:       encoded,
+		ServerVersion: sf.Version,
+		ServerHash:    sf.Hash,
+		Encoding:      enc,
 	}, true
 }
 

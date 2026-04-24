@@ -34,7 +34,7 @@ export default class ObsidianSyncPlugin extends Plugin {
 
     if (this.settings.serverUrl && this.settings.token && this.settings.vaultName) {
       this.connectSync().catch((err) =>
-        console.error("[obsidian-sync] Auto-connect failed:", err),
+        console.error("[obsidian-goat-sync] Auto-connect failed:", err),
       );
     }
   }
@@ -50,7 +50,7 @@ export default class ObsidianSyncPlugin extends Plugin {
 
     const { serverUrl, token, vaultName } = this.settings;
     if (!serverUrl || !token || !vaultName) {
-      new Notice("Obsidian Sync: Please configure server URL, token, and vault name");
+      new Notice("Obsidian Goat Sync: Please configure server URL, token, and vault name");
       return;
     }
 
@@ -71,9 +71,9 @@ export default class ObsidianSyncPlugin extends Plugin {
 
     const connected = await this.syncManager.start();
     if (connected) {
-      new Notice("Obsidian Sync: Connected");
+      new Notice("Obsidian Goat Sync: Connected");
     } else {
-      new Notice("Obsidian Sync: Initial connection failed, will retry every 30s");
+      new Notice("Obsidian Goat Sync: Initial connection failed, will retry every 30s");
     }
   }
 
@@ -81,7 +81,7 @@ export default class ObsidianSyncPlugin extends Plugin {
     if (this.syncManager) {
       await this.syncManager.stop();
       this.syncManager = null;
-      new Notice("Obsidian Sync: Disconnected");
+      new Notice("Obsidian Goat Sync: Disconnected");
     }
     this.fileMetaStore = null;
   }

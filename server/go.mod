@@ -1,4 +1,4 @@
-module obsidian-sync
+module obsidian-goat-sync
 
 go 1.25.5
 

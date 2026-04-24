@@ -93,7 +93,7 @@ export class SyncManager {
       await this.performSyncInit();
       return true;
     } catch (err) {
-      console.error("[obsidian-sync] Initial connect failed, healthcheck will retry:", err);
+      console.error("[obsidian-goat-sync] Initial connect failed, healthcheck will retry:", err);
       return false;
     }
   }
@@ -356,7 +356,7 @@ export class SyncManager {
         existing.currentServerContent = msg.conflict.currentServerContent;
         existing.prevServerVersion = msg.conflict.currentServerVersion;
         existing.selection = undefined;
-        new Notice("[obsidian-sync] 서버에 더 최신 변경이 있습니다: " + msg.path);
+        new Notice("[obsidian-goat-sync] 서버에 더 최신 변경이 있습니다: " + msg.path);
         this.conflictModal?.refreshIfOpen(msg.path);
       }
     }

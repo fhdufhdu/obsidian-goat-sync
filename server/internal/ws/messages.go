@@ -38,10 +38,10 @@ type UpdateMetaEntry struct {
 }
 
 type ConflictInfo struct {
-	CurrentServerVersion   int64  `json:"currentServerVersion"`
-	CurrentServerHash      string `json:"currentServerHash"`
-	CurrentServerContent   string `json:"currentServerContent"`
-	Encoding               string `json:"encoding,omitempty"`
+	CurrentServerVersion int64  `json:"currentServerVersion"`
+	CurrentServerHash    string `json:"currentServerHash"`
+	CurrentServerContent string `json:"currentServerContent"`
+	Encoding             string `json:"encoding,omitempty"`
 }
 
 type SyncConflictEntry struct {

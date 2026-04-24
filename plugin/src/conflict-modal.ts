@@ -43,7 +43,7 @@ export class ConflictModal extends Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.addClass("obsidian-sync-conflict-modal");
+    contentEl.addClass("obsidian-goat-sync-conflict-modal");
     contentEl.style.cssText = "display:flex;flex-direction:column;height:80vh;min-width:700px;";
 
     const header = contentEl.createEl("h2", { text: "Sync Conflicts" });
@@ -308,7 +308,7 @@ export class ConflictModal extends Modal {
       try {
         await this.syncManager.applyConflictResolution(entry);
       } catch (err) {
-        new Notice(`[obsidian-sync] Failed to apply conflict for ${entry.path}: ${err}`);
+        new Notice(`[obsidian-goat-sync] Failed to apply conflict for ${entry.path}: ${err}`);
       }
     }
     if (this.queue.size() === 0) {

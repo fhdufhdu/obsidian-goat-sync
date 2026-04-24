@@ -6,13 +6,13 @@ import (
 )
 
 func TestLoadFromEnv(t *testing.T) {
-	os.Setenv("OBSIDIAN_SYNC_ADMIN_USER", "testadmin")
-	os.Setenv("OBSIDIAN_SYNC_ADMIN_PASS", "testpass")
-	os.Setenv("OBSIDIAN_SYNC_PORT", "9090")
+	os.Setenv("OBSIDIAN_GOAT_SYNC_ADMIN_USER", "testadmin")
+	os.Setenv("OBSIDIAN_GOAT_SYNC_ADMIN_PASS", "testpass")
+	os.Setenv("OBSIDIAN_GOAT_SYNC_PORT", "9090")
 	defer func() {
-		os.Unsetenv("OBSIDIAN_SYNC_ADMIN_USER")
-		os.Unsetenv("OBSIDIAN_SYNC_ADMIN_PASS")
-		os.Unsetenv("OBSIDIAN_SYNC_PORT")
+		os.Unsetenv("OBSIDIAN_GOAT_SYNC_ADMIN_USER")
+		os.Unsetenv("OBSIDIAN_GOAT_SYNC_ADMIN_PASS")
+		os.Unsetenv("OBSIDIAN_GOAT_SYNC_PORT")
 	}()
 
 	cfg := Load()
@@ -29,9 +29,9 @@ func TestLoadFromEnv(t *testing.T) {
 }
 
 func TestLoadDefaults(t *testing.T) {
-	os.Unsetenv("OBSIDIAN_SYNC_ADMIN_USER")
-	os.Unsetenv("OBSIDIAN_SYNC_ADMIN_PASS")
-	os.Unsetenv("OBSIDIAN_SYNC_PORT")
+	os.Unsetenv("OBSIDIAN_GOAT_SYNC_ADMIN_USER")
+	os.Unsetenv("OBSIDIAN_GOAT_SYNC_ADMIN_PASS")
+	os.Unsetenv("OBSIDIAN_GOAT_SYNC_PORT")
 
 	cfg := Load()
 

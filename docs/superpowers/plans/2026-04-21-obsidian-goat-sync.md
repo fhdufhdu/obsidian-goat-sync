@@ -1,4 +1,4 @@
-# Obsidian Sync Implementation Plan
+# Obsidian Goat Sync Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -94,7 +94,7 @@ plugin/
 
 ```bash
 cd server
-go mod init obsidian-sync
+go mod init obsidian-goat-sync
 ```
 
 - [ ] **Step 2: config_test.go 작성**
@@ -109,13 +109,13 @@ import (
 )
 
 func TestLoadFromEnv(t *testing.T) {
-	os.Setenv("OBSIDIAN_SYNC_ADMIN_USER", "testadmin")
-	os.Setenv("OBSIDIAN_SYNC_ADMIN_PASS", "testpass")
-	os.Setenv("OBSIDIAN_SYNC_PORT", "9090")
+	os.Setenv("OBSIDIAN_GOAT_SYNC_ADMIN_USER", "testadmin")
+	os.Setenv("OBSIDIAN_GOAT_SYNC_ADMIN_PASS", "testpass")
+	os.Setenv("OBSIDIAN_GOAT_SYNC_PORT", "9090")
 	defer func() {
-		os.Unsetenv("OBSIDIAN_SYNC_ADMIN_USER")
-		os.Unsetenv("OBSIDIAN_SYNC_ADMIN_PASS")
-		os.Unsetenv("OBSIDIAN_SYNC_PORT")
+		os.Unsetenv("OBSIDIAN_GOAT_SYNC_ADMIN_USER")
+		os.Unsetenv("OBSIDIAN_GOAT_SYNC_ADMIN_PASS")
+		os.Unsetenv("OBSIDIAN_GOAT_SYNC_PORT")
 	}()
 
 	cfg := Load()
@@ -132,9 +132,9 @@ func TestLoadFromEnv(t *testing.T) {
 }
 
 func TestLoadDefaults(t *testing.T) {
-	os.Unsetenv("OBSIDIAN_SYNC_ADMIN_USER")
-	os.Unsetenv("OBSIDIAN_SYNC_ADMIN_PASS")
-	os.Unsetenv("OBSIDIAN_SYNC_PORT")
+	os.Unsetenv("OBSIDIAN_GOAT_SYNC_ADMIN_USER")
+	os.Unsetenv("OBSIDIAN_GOAT_SYNC_ADMIN_PASS")
+	os.Unsetenv("OBSIDIAN_GOAT_SYNC_PORT")
 
 	cfg := Load()
 
@@ -171,9 +171,9 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		AdminUser: getEnv("OBSIDIAN_SYNC_ADMIN_USER", "admin"),
-		AdminPass: getEnv("OBSIDIAN_SYNC_ADMIN_PASS", ""),
-		Port:      getEnv("OBSIDIAN_SYNC_PORT", "8080"),
+		AdminUser: getEnv("OBSIDIAN_GOAT_SYNC_ADMIN_USER", "admin"),
+		AdminPass: getEnv("OBSIDIAN_GOAT_SYNC_ADMIN_PASS", ""),
+		Port:      getEnv("OBSIDIAN_GOAT_SYNC_PORT", "8080"),
 		DataDir:   "/app/data",
 	}
 }
@@ -201,12 +201,12 @@ package main
 
 import (
 	"fmt"
-	"obsidian-sync/internal/config"
+	"obsidian-goat-sync/internal/config"
 )
 
 func main() {
 	cfg := config.Load()
-	fmt.Printf("Starting obsidian-sync on port %s\n", cfg.Port)
+	fmt.Printf("Starting obsidian-goat-sync on port %s\n", cfg.Port)
 }
 ```
 
@@ -1830,8 +1830,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/storage"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/storage"
 )
 
 type testClient struct {
@@ -2103,9 +2103,9 @@ import (
 	"encoding/base64"
 	"log"
 
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/storage"
-	syncpkg "obsidian-sync/internal/sync"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/storage"
+	syncpkg "obsidian-goat-sync/internal/sync"
 )
 
 type Handler struct {
@@ -2439,9 +2439,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"obsidian-sync/internal/config"
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/storage"
+	"obsidian-goat-sync/internal/config"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/storage"
 )
 
 type Dashboard struct {
@@ -2643,7 +2643,7 @@ package dashboard
 import "html/template"
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!DOCTYPE html>
-<html><head><title>Obsidian Sync - Login</title>
+<html><head><title>Obsidian Goat Sync - Login</title>
 <style>
 body { font-family: system-ui; max-width: 400px; margin: 100px auto; padding: 0 20px; }
 form { display: flex; flex-direction: column; gap: 12px; }
@@ -2652,7 +2652,7 @@ button { padding: 10px; background: #7c3aed; color: white; border: none; border-
 .error { color: red; }
 </style></head>
 <body>
-<h1>Obsidian Sync</h1>
+<h1>Obsidian Goat Sync</h1>
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
 <form method="POST" action="/login">
 <input name="username" placeholder="Username" required>
@@ -2662,7 +2662,7 @@ button { padding: 10px; background: #7c3aed; color: white; border: none; border-
 </body></html>`))
 
 var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
-<html><head><title>Obsidian Sync</title>
+<html><head><title>Obsidian Goat Sync</title>
 <style>
 body { font-family: system-ui; max-width: 900px; margin: 0 auto; padding: 20px; }
 nav { display: flex; gap: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 20px; }
@@ -2674,7 +2674,7 @@ button.danger { background: #dc2626; }
 .token { font-family: monospace; font-size: 12px; }
 </style></head>
 <body>
-<h1>Obsidian Sync</h1>
+<h1>Obsidian Goat Sync</h1>
 <nav>
 <a href="/">Vaults</a>
 <a href="/logout">Logout</a>
@@ -2718,12 +2718,12 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"obsidian-sync/internal/config"
-	"obsidian-sync/internal/dashboard"
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/github"
-	"obsidian-sync/internal/storage"
-	"obsidian-sync/internal/ws"
+	"obsidian-goat-sync/internal/config"
+	"obsidian-goat-sync/internal/dashboard"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/github"
+	"obsidian-goat-sync/internal/storage"
+	"obsidian-goat-sync/internal/ws"
 )
 
 var upgrader = websocket.Upgrader{
@@ -2775,7 +2775,7 @@ func main() {
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	log.Printf("Obsidian Sync running on %s", addr)
+	log.Printf("Obsidian Goat Sync running on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 ```
@@ -2851,8 +2851,8 @@ import (
 	"os/exec"
 	"time"
 
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/storage"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/storage"
 )
 
 type BackupService struct {
@@ -2986,16 +2986,16 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=1 go build -o obsidian-sync ./cmd/server/
+RUN CGO_ENABLED=1 go build -o obsidian-goat-sync ./cmd/server/
 
 FROM alpine:3.19
 RUN apk add --no-cache git ca-certificates
 WORKDIR /app
-COPY --from=builder /build/obsidian-sync .
+COPY --from=builder /build/obsidian-goat-sync .
 RUN mkdir -p /app/data
 
 EXPOSE 8080
-CMD ["./obsidian-sync"]
+CMD ["./obsidian-goat-sync"]
 ```
 
 - [ ] **Step 2: docker-compose.yml 작성**
@@ -3003,14 +3003,14 @@ CMD ["./obsidian-sync"]
 ```yaml
 # server/docker-compose.yml
 services:
-  obsidian-sync:
+  obsidian-goat-sync:
     build: .
     ports:
       - "8080:8080"
     environment:
-      - OBSIDIAN_SYNC_ADMIN_USER=admin
-      - OBSIDIAN_SYNC_ADMIN_PASS=changeme
-      - OBSIDIAN_SYNC_PORT=8080
+      - OBSIDIAN_GOAT_SYNC_ADMIN_USER=admin
+      - OBSIDIAN_GOAT_SYNC_ADMIN_PASS=changeme
+      - OBSIDIAN_GOAT_SYNC_PORT=8080
     volumes:
       - ./data:/app/data
     restart: unless-stopped
@@ -3039,8 +3039,8 @@ git commit -m "feat: add Dockerfile and docker-compose"
 
 ```json
 {
-  "id": "obsidian-sync",
-  "name": "Obsidian Sync",
+  "id": "obsidian-goat-sync",
+  "name": "Obsidian Goat Sync",
   "version": "0.1.0",
   "minAppVersion": "1.0.0",
   "description": "Sync vault to self-hosted server",
@@ -3053,7 +3053,7 @@ git commit -m "feat: add Dockerfile and docker-compose"
 
 ```json
 {
-  "name": "obsidian-sync-plugin",
+  "name": "obsidian-goat-sync-plugin",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -3199,7 +3199,7 @@ export class SyncSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Obsidian Sync Settings" });
+    containerEl.createEl("h2", { text: "Obsidian Goat Sync Settings" });
 
     new Setting(containerEl)
       .setName("Server URL")
@@ -3731,16 +3731,16 @@ export default class ObsidianSyncPlugin extends Plugin {
 
     const { serverUrl, token, vaultName } = this.settings;
     if (!serverUrl || !token || !vaultName) {
-      new Notice("Obsidian Sync: Please configure server URL, token, and vault name");
+      new Notice("Obsidian Goat Sync: Please configure server URL, token, and vault name");
       return;
     }
 
     this.syncManager = new SyncManager(this.app.vault, serverUrl, token, vaultName);
     try {
       await this.syncManager.start();
-      new Notice("Obsidian Sync: Connected");
+      new Notice("Obsidian Goat Sync: Connected");
     } catch {
-      new Notice("Obsidian Sync: Connection failed");
+      new Notice("Obsidian Goat Sync: Connection failed");
       this.syncManager = null;
     }
   }
@@ -3749,7 +3749,7 @@ export default class ObsidianSyncPlugin extends Plugin {
     if (this.syncManager) {
       this.syncManager.stop();
       this.syncManager = null;
-      new Notice("Obsidian Sync: Disconnected");
+      new Notice("Obsidian Goat Sync: Disconnected");
     }
   }
 
@@ -3808,7 +3808,7 @@ Expected: 빌드 성공
 - [ ] **Step 4: Docker 빌드**
 
 ```bash
-cd server && docker build -t obsidian-sync .
+cd server && docker build -t obsidian-goat-sync .
 ```
 Expected: 이미지 빌드 성공
 

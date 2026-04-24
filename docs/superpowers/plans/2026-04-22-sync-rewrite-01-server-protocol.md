@@ -210,7 +210,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/estsoft/project/other/obsidian-sync
+cd /Users/estsoft/project/other/obsidian-goat-sync
 git add server/internal/db/db.go server/internal/db/db_test.go
 git commit -m "feat(db): migrate to version/hash schema with inserted_at/updated_at"
 ```
@@ -1867,8 +1867,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/storage"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/storage"
 )
 
 type fakeClient struct {
@@ -2056,9 +2056,9 @@ import (
 	"encoding/base64"
 	"log"
 
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/storage"
-	syncpkg "obsidian-sync/internal/sync"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/storage"
+	syncpkg "obsidian-goat-sync/internal/sync"
 )
 
 // ClientSender handler가 의존하는 최소 인터페이스 (테스트에서 fake 주입).
@@ -2647,7 +2647,7 @@ func (h *Handler) handleFileCreate(client ClientSender, msg IncomingMessage) {
 }
 ```
 
-`handler.go` 상단 import에 `"obsidian-sync/internal/db"`가 이미 있음. `db.ErrFileConflict` 참조.
+`handler.go` 상단 import에 `"obsidian-goat-sync/internal/db"`가 이미 있음. `db.ErrFileConflict` 참조.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -3478,12 +3478,12 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"obsidian-sync/internal/config"
-	"obsidian-sync/internal/dashboard"
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/github"
-	"obsidian-sync/internal/storage"
-	"obsidian-sync/internal/ws"
+	"obsidian-goat-sync/internal/config"
+	"obsidian-goat-sync/internal/dashboard"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/github"
+	"obsidian-goat-sync/internal/storage"
+	"obsidian-goat-sync/internal/ws"
 )
 
 var upgrader = websocket.Upgrader{
@@ -3532,7 +3532,7 @@ func main() {
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	log.Printf("Obsidian Sync running on %s", addr)
+	log.Printf("Obsidian Goat Sync running on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 ```
@@ -3678,7 +3678,7 @@ import (
 	"strings"
 	"testing"
 
-	"obsidian-sync/internal/db"
+	"obsidian-goat-sync/internal/db"
 )
 
 func TestBuildRemoteURLInjectsToken(t *testing.T) {
@@ -3744,8 +3744,8 @@ import (
 	"strings"
 	"time"
 
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/storage"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/storage"
 )
 
 type BackupService struct {

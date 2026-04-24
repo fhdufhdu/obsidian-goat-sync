@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"obsidian-sync/internal/config"
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/storage"
+	"obsidian-goat-sync/internal/config"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/storage"
 )
 
 type Dashboard struct {

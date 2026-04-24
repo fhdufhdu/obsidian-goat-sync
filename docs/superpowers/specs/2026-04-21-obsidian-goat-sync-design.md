@@ -1,4 +1,4 @@
-# Obsidian Sync - 설계 문서
+# Obsidian Goat Sync - 설계 문서
 
 ## 개요
 
@@ -15,14 +15,14 @@
 
 ```yaml
 services:
-  obsidian-sync:
-    image: obsidian-sync
+  obsidian-goat-sync:
+    image: obsidian-goat-sync
     ports:
       - "8080:8080"
     environment:
-      - OBSIDIAN_SYNC_ADMIN_USER=admin
-      - OBSIDIAN_SYNC_ADMIN_PASS=password
-      - OBSIDIAN_SYNC_PORT=8080
+      - OBSIDIAN_GOAT_SYNC_ADMIN_USER=admin
+      - OBSIDIAN_GOAT_SYNC_ADMIN_PASS=password
+      - OBSIDIAN_GOAT_SYNC_PORT=8080
     volumes:
       - ./data:/app/data
 ```

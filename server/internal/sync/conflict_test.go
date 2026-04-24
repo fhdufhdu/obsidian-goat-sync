@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"testing"
 
-	"obsidian-sync/internal/db"
+	"obsidian-goat-sync/internal/db"
 )
 
 func int64Ptr(v int64) *int64 { return &v }

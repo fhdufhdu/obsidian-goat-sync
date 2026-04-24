@@ -6,13 +6,13 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=1 go build -o obsidian-sync ./cmd/server/
+RUN CGO_ENABLED=1 go build -o obsidian-goat-sync ./cmd/server/
 
 FROM alpine:3.19
 RUN apk add --no-cache git ca-certificates
 WORKDIR /app
-COPY --from=builder /build/obsidian-sync .
+COPY --from=builder /build/obsidian-goat-sync .
 RUN mkdir -p /app/data
 
 EXPOSE 8080
-CMD ["./obsidian-sync"]
+CMD ["./obsidian-goat-sync"]

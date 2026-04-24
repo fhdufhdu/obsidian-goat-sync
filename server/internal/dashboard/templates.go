@@ -3,7 +3,7 @@ package dashboard
 import "html/template"
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!DOCTYPE html>
-<html><head><title>Obsidian Sync - Login</title>
+<html><head><title>Obsidian Goat Sync - Login</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: system-ui, -apple-system, sans-serif; background: #0f0f0f; color: #e0e0e0; }
@@ -18,7 +18,7 @@ button:hover { background: #6d28d9; }
 </style></head>
 <body>
 <div class="login-wrap">
-<h1>Obsidian Sync</h1>
+<h1>Obsidian Goat Sync</h1>
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
 <form method="POST" action="/login">
 <input name="username" placeholder="Username" required>
@@ -29,7 +29,7 @@ button:hover { background: #6d28d9; }
 </body></html>`))
 
 var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
-<html><head><title>Obsidian Sync</title>
+<html><head><title>Obsidian Goat Sync</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: system-ui, -apple-system, sans-serif; background: #0f0f0f; color: #e0e0e0; }
@@ -69,7 +69,7 @@ button { padding: 8px 14px; border: none; border-radius: 6px; cursor: pointer; f
 </style></head>
 <body>
 <nav>
-  <span class="brand">Obsidian Sync</span>
+  <span class="brand">Obsidian Goat Sync</span>
   <a href="/logout">Logout</a>
 </nav>
 <div class="container">

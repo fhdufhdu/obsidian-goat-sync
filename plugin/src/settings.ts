@@ -27,7 +27,7 @@ export class SyncSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Obsidian Sync Settings" });
+    containerEl.createEl("h2", { text: "Obsidian Goat Sync Settings" });
 
     new Setting(containerEl)
       .setName("Server URL")
@@ -65,7 +65,7 @@ export class SyncSettingTab extends PluginSettingTab {
           }),
       );
 
-    const errorEl = containerEl.createDiv({ cls: "obsidian-sync-error" });
+    const errorEl = containerEl.createDiv({ cls: "obsidian-goat-sync-error" });
     errorEl.style.color = "var(--text-error)";
 
     new Setting(containerEl).addButton((btn) =>

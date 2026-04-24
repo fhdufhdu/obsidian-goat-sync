@@ -126,7 +126,7 @@ export class WsClient {
             handlers.forEach((cb) => cb({ type: "reconnected" }));
           })
           .catch((err) => {
-            console.error("[obsidian-sync] Reconnect failed:", err);
+            console.error("[obsidian-goat-sync] Reconnect failed:", err);
           });
       }
     }, 30000);

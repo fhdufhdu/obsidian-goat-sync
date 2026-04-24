@@ -5,9 +5,9 @@ import (
 	"encoding/base64"
 	"log"
 
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/storage"
-	syncpkg "obsidian-sync/internal/sync"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/storage"
+	syncpkg "obsidian-goat-sync/internal/sync"
 )
 
 type Handler struct {

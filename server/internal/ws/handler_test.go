@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/storage"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/storage"
 )
 
 func setupHandler(t *testing.T) (*Handler, *db.Queries, *storage.Storage, string) {

@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/storage"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/storage"
 )
 
 type BackupService struct {

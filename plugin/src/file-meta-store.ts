@@ -43,7 +43,7 @@ export class FileMetaStore {
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
       this.onSave(this.data).catch((err) =>
-        console.error("[obsidian-sync] Failed to save file meta:", err),
+        console.error("[obsidian-goat-sync] Failed to save file meta:", err),
       );
     }, 500);
   }

@@ -3,7 +3,7 @@ package sync
 import (
 	"database/sql"
 
-	"obsidian-sync/internal/db"
+	"obsidian-goat-sync/internal/db"
 )
 
 type SyncAction int
@@ -72,9 +72,9 @@ func ClassifyFile(clientFile db.SyncInitFile, serverFile db.File, serverExists b
 }
 
 type OptimisticResult struct {
-	OK      bool
-	Noop    bool
-	Err     error
+	OK        bool
+	Noop      bool
+	Err       error
 	ErrNoRows bool
 }
 

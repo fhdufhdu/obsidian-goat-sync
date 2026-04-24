@@ -7,12 +7,12 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"obsidian-sync/internal/config"
-	"obsidian-sync/internal/dashboard"
-	"obsidian-sync/internal/db"
-	"obsidian-sync/internal/github"
-	"obsidian-sync/internal/storage"
-	"obsidian-sync/internal/ws"
+	"obsidian-goat-sync/internal/config"
+	"obsidian-goat-sync/internal/dashboard"
+	"obsidian-goat-sync/internal/db"
+	"obsidian-goat-sync/internal/github"
+	"obsidian-goat-sync/internal/storage"
+	"obsidian-goat-sync/internal/ws"
 )
 
 var upgrader = websocket.Upgrader{
@@ -64,6 +64,6 @@ func main() {
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	log.Printf("Obsidian Sync running on %s", addr)
+	log.Printf("Obsidian Goat Sync running on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }

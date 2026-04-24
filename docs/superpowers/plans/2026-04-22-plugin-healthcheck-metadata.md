@@ -411,7 +411,7 @@ async connectSync() {
 
   const { serverUrl, token, vaultName, fileMetadata } = this.settings;
   if (!serverUrl || !token || !vaultName) {
-    new Notice("Obsidian Sync: Please configure server URL, token, and vault name");
+    new Notice("Obsidian Goat Sync: Please configure server URL, token, and vault name");
     return;
   }
 
@@ -425,9 +425,9 @@ async connectSync() {
   );
   try {
     await this.syncManager.start();
-    new Notice("Obsidian Sync: Connected");
+    new Notice("Obsidian Goat Sync: Connected");
   } catch {
-    new Notice("Obsidian Sync: Connection failed");
+    new Notice("Obsidian Goat Sync: Connection failed");
     this.syncManager = null;
   }
 }

@@ -82,18 +82,14 @@
 
 기존 `file_create`, `file_update`, `file_create_result`, `file_update_result`는 제거한다.
 
-응답 action은 CSV 용어를 따른다.
+응답 action은 CSV 용어를 따르며 응답 타입별로 구분한다.
 
-- `toPut`
-- `toUpdateMeta`
-- `toDownload`
-- `toDeleteLocal`
-- `toRemoveMeta`
-- `none`
-- `conflict`
-- `deleteConflict`
-- `okUpdateMeta`
-- `okRemoveMeta`
+| 응답 타입 | action |
+|---|---|
+| `syncResult` | `toPut`, `toUpdateMeta`, `toDownload`, `toDeleteLocal`, `toRemoveMeta`, `none`, `conflict`, `deleteConflict` |
+| `fileCheckResult` | `put`, `updateMeta`, `toDeleteLocal`, `upToDate`, `conflict`, `deleteConflict` |
+| `filePutResult` | `okUpdateMeta`, `toDeleteLocal`, `conflict`, `deleteConflict` |
+| `fileDeleteResult` | `okUpdateMeta`, `okRemoveMeta`, `deleteConflict` |
 
 필드 이름도 문서 용어에 맞춰 정리한다. 기존 `prevServerVersion`은 프로토콜에서 `baseVersion`으로 바꾼다. 클라이언트 내부 메타 필드는 구현 중 한 번에 바꿔도 되고, 경계에서 변환해도 되지만 최종 프로토콜은 `baseVersion`을 사용한다.
 
@@ -156,8 +152,15 @@ worker는 queue lock 안에서 항목을 짧게 claim한다.
 
 1. `pending` 또는 `retryableFailed` 항목 하나를 고른다.
 2. 항목을 `inFlight`로 바꾼다.
-3. `path`, `baseVersion`, `sentHash` snapshot을 반환한다.
-4. 파일 읽기, hash 계산, `fileCheck`, `filePut`은 queue lock 밖에서 수행한다.
+3. `path`, `baseVersion`, claim 당시의 `lastSeenHash` snapshot을 반환한다.
+4. 파일 읽기와 hash 계산은 queue lock 밖에서 수행한다.
+5. 실제 전송할 content hash를 계산한 뒤 queue lock을 다시 잡고 그 hash를 `sentHash`로 기록한다.
+6. `fileCheck`, `filePut` 네트워크 요청은 queue lock 밖에서 수행한다.
+
+`sentHash`는 claim 시점의 관측값이 아니라 실제 전송할 content의 hash다.
+파일 읽기 중 watcher가 같은 항목을 갱신하지 않았고 현재 `lastSeenHash`가 claim 당시 hash와 같다면,
+worker가 읽은 실제 hash를 `lastSeenHash`에도 반영할 수 있다.
+이미 watcher가 더 최신 hash를 기록했다면 `lastSeenHash`는 덮어쓰지 않는다.
 
 성공 응답이 오면 먼저 `FileMetaStore`를 성공 반영된 snapshot 기준으로 갱신한다. 그 다음 queue lock 안에서 현재 entry를 확인한다.
 
@@ -180,6 +183,9 @@ transient failure면 서버 반영이 없으므로 `baseVersion`은 유지하고
 2. 같은 디렉터리의 임시 파일에 전체 queue JSON을 쓴다.
 3. 임시 파일 쓰기가 성공하면 실제 queue 파일로 rename한다.
 
+앱 시작 시 남아 있는 임시 파일은 이전 저장 중 중단된 흔적으로 보고 정리한다.
+런타임과 파일시스템이 지원하면 임시 파일 flush와 parent directory fsync를 best-effort로 수행한다.
+
 항목은 다음 값을 가진다.
 
 - `path`
@@ -187,6 +193,11 @@ transient failure면 서버 반영이 없으므로 `baseVersion`은 유지하고
 - `serverHash`
 - `queuedAt`
 - `status`
+
+`DeleteQueue`도 path-keyed queue다.
+같은 path의 delete 항목이 이미 있으면 중복 항목을 추가하지 않는다.
+기존 항목의 `baseVersion`과 `serverHash`는 최초 삭제 의도를 보존하기 위해 덮어쓰지 않고,
+필요하면 표시용 `queuedAt`만 갱신한다.
 
 삭제 watcher가 발생했을 때 로컬 메타가 있으면 delete 항목을 저장한다. 로컬 메타가 없으면 서버에 삭제할 근거가 없으므로 저장하지 않는다.
 
@@ -246,9 +257,11 @@ transient failure가 하나라도 있으면 `syncInit`은 시작하지 않는다
 
 ### 서버
 
-서버는 `message-matrix.csv`의 행을 기준으로 Go 테이블 테스트를 만든다.
+서버는 `message-matrix.csv`의 행 ID를 기준으로 Go 테이블 테스트를 만든다.
 
-CSV를 런타임에 직접 파싱하지 않고, 각 행을 명시적인 테스트 케이스로 옮긴다. 한국어 설명 문구 변화에 테스트가 흔들리지 않고, 실패 케이스 이름을 리뷰에서 추적하기 쉽기 때문이다.
+각 CSV 행은 `M001` 같은 안정적인 `id`를 가진다.
+구현 테스트는 각 행을 명시적인 fixture로 옮기되, 별도 coverage test가 CSV의 모든 row id가 fixture에 존재하는지 검증한다.
+한국어 설명 문구 변화에 테스트가 흔들리지 않으면서도 CSV와 테스트가 조용히 drift되지 않게 하기 위해서다.
 
 테스트 우선순위는 다음과 같다.
 

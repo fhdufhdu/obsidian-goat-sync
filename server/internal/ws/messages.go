@@ -59,19 +59,22 @@ type SyncConflictEntry struct {
 type UpdateMetaEntry = ServerMetaPayload
 
 type OutgoingMessage struct {
-	Type         string              `json:"type"`
-	Vault        string              `json:"vault,omitempty"`
-	Path         string              `json:"path,omitempty"`
-	Action       string              `json:"action,omitempty"`
-	Ok           *bool               `json:"ok,omitempty"`
-	Content      string              `json:"content,omitempty"`
-	Encoding     string              `json:"encoding,omitempty"`
-	Meta         *ServerMetaPayload  `json:"meta,omitempty"`
-	Conflict     *ConflictInfo       `json:"conflict,omitempty"`
-	ToDownload   []DownloadEntry     `json:"toDownload,omitempty"`
-	ToUpdateMeta []ServerMetaPayload `json:"toUpdateMeta,omitempty"`
-	Conflicts    []SyncConflictEntry `json:"conflicts,omitempty"`
-	Error        string              `json:"error,omitempty"`
+	Type          string              `json:"type"`
+	Vault         string              `json:"vault,omitempty"`
+	Path          string              `json:"path,omitempty"`
+	Action        string              `json:"action,omitempty"`
+	Ok            *bool               `json:"ok,omitempty"`
+	Content       string              `json:"content,omitempty"`
+	Encoding      string              `json:"encoding,omitempty"`
+	ToPut         []string            `json:"toPut,omitempty"`
+	Meta          *ServerMetaPayload  `json:"meta,omitempty"`
+	Conflict      *ConflictInfo       `json:"conflict,omitempty"`
+	ToDownload    []DownloadEntry     `json:"toDownload,omitempty"`
+	ToUpdateMeta  []ServerMetaPayload `json:"toUpdateMeta,omitempty"`
+	ToDeleteLocal []ServerMetaPayload `json:"toDeleteLocal,omitempty"`
+	ToRemoveMeta  []ServerMetaPayload `json:"toRemoveMeta,omitempty"`
+	Conflicts     []SyncConflictEntry `json:"conflicts,omitempty"`
+	Error         string              `json:"error,omitempty"`
 }
 
 func boolPtr(b bool) *bool { return &b }

@@ -3,7 +3,6 @@ package ws
 import (
 	"encoding/json"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"obsidian-goat-sync/internal/db"
@@ -105,19 +104,22 @@ func TestHandleSyncInit_NoPrev_NoServer(t *testing.T) {
 		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
-			{Path: "notes/new.md", LocalHash: "clienthash"},
+			{Path: "notes/new.md", Exists: true, LocalHash: "clienthash"},
 		},
 	}))
 
 	resp := readResponse(t, c)
-	if !strings.Contains(resp.Error, "legacy sync_init actions not yet supported") {
-		t.Fatalf("expected legacy compatibility error, got: %q", resp.Error)
-	}
-	if !strings.Contains(resp.Error, "toUpload") {
-		t.Fatalf("expected toUpload in error list, got: %q", resp.Error)
+	if len(resp.ToPut) != 1 || resp.ToPut[0] != "notes/new.md" {
+		t.Fatalf("expected toPut=[notes/new.md], got %#v", resp.ToPut)
 	}
 	if len(resp.ToDownload) != 0 {
 		t.Errorf("expected no downloads, got %v", resp.ToDownload)
+	}
+	if len(resp.ToDeleteLocal) != 0 {
+		t.Errorf("expected no delete-local actions, got %v", resp.ToDeleteLocal)
+	}
+	if len(resp.ToRemoveMeta) != 0 {
+		t.Errorf("expected no remove-meta actions, got %v", resp.ToRemoveMeta)
 	}
 	if len(resp.ToUpdateMeta) != 0 {
 		t.Errorf("expected no metadata updates, got %v", resp.ToUpdateMeta)
@@ -140,19 +142,16 @@ func TestHandleSyncInit_WithPrev_SameVersion_DiffHash_ToUpdate(t *testing.T) {
 		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
-			{Path: "notes/hello.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "clienthash"},
+			{Path: "notes/hello.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "clienthash"},
 		},
 	}))
 
 	resp := readResponse(t, c)
-	if !strings.Contains(resp.Error, "legacy sync_init actions not yet supported") {
-		t.Fatalf("expected legacy compatibility error, got: %q", resp.Error)
-	}
-	if !strings.Contains(resp.Error, "toUpdate") {
-		t.Fatalf("expected toUpdate in error list, got: %q", resp.Error)
+	if len(resp.ToPut) != 1 || resp.ToPut[0] != "notes/hello.md" {
+		t.Fatalf("expected toPut=[notes/hello.md], got %#v", resp.ToPut)
 	}
 	if len(resp.ToDownload) != 0 {
-		t.Errorf("expected toUpdate-like path not in download/conflict buckets, got download=%v", resp.ToDownload)
+		t.Errorf("expected no downloads, got %v", resp.ToDownload)
 	}
 	if len(resp.Conflicts) != 0 {
 		t.Errorf("expected toUpdate-like path not in download/conflict buckets, got conflicts=%v", resp.Conflicts)
@@ -173,19 +172,19 @@ func TestHandleSyncInit_Tombstone_ToDelete(t *testing.T) {
 		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
-			{Path: "notes/old.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash1"},
+			{Path: "notes/old.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash1"},
 		},
 	}))
 
 	resp := readResponse(t, c)
-	if !strings.Contains(resp.Error, "legacy sync_init actions not yet supported") {
-		t.Fatalf("expected legacy compatibility error, got: %q", resp.Error)
+	if len(resp.ToDeleteLocal) != 1 {
+		t.Fatalf("expected one toDeleteLocal path, got %v", resp.ToDeleteLocal)
 	}
-	if !strings.Contains(resp.Error, "toDelete") {
-		t.Fatalf("expected toDelete in error list, got: %q", resp.Error)
+	if !resp.ToDeleteLocal[0].IsDeleted {
+		t.Fatal("expected toDeleteLocal item marked deleted")
 	}
-	if len(resp.Conflicts) != 0 {
-		t.Errorf("expected tombstone cleanup with no conflicts, got %v", resp.Conflicts)
+	if resp.ToDeleteLocal[0].ServerVersion != 2 {
+		t.Fatalf("expected toDeleteLocal server version 2, got %#v", resp.ToDeleteLocal[0].ServerVersion)
 	}
 }
 
@@ -236,7 +235,7 @@ func TestHandleSyncInit_NoPrev_ActiveSameHash(t *testing.T) {
 		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
-			{Path: "notes/hello.md", LocalHash: "serverhash"},
+			{Path: "notes/hello.md", Exists: true, LocalHash: "serverhash"},
 		},
 	}))
 
@@ -262,7 +261,7 @@ func TestHandleSyncInit_NoPrev_ActiveDiffHash(t *testing.T) {
 		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
-			{Path: "notes/hello.md", LocalHash: "clienthash"},
+			{Path: "notes/hello.md", Exists: true, LocalHash: "clienthash"},
 		},
 	}))
 
@@ -285,7 +284,7 @@ func TestHandleSyncInit_WithPrev_SameVersion_SameHash_Skip(t *testing.T) {
 		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
-			{Path: "notes/hello.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash1"},
+			{Path: "notes/hello.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash1"},
 		},
 	}))
 
@@ -309,7 +308,7 @@ func TestHandleSyncInit_WithPrev_OlderVersion_SameClientHash_ToUpdateMeta(t *tes
 		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
-			{Path: "notes/hello.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash2"},
+			{Path: "notes/hello.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash2"},
 		},
 	}))
 
@@ -333,13 +332,13 @@ func TestHandleSyncInit_WithPrev_OlderVersion_PrevHashEqClient_ToDownload(t *tes
 		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
-			{Path: "notes/hello.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash1"},
+			{Path: "notes/hello.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash1"},
 		},
 	}))
 
 	resp := readResponse(t, c)
-	if len(resp.ToDownload) != 1 {
-		t.Errorf("expected toDownload, got %v", resp.ToDownload)
+	if len(resp.Conflicts) != 1 {
+		t.Errorf("expected 1 conflict, got %v", resp.Conflicts)
 	}
 }
 
@@ -361,6 +360,199 @@ func TestHandleSyncInit_ServerOnlyFile_ToDownload(t *testing.T) {
 	resp := readResponse(t, c)
 	if len(resp.ToDownload) != 1 || resp.ToDownload[0].Path != "notes/server-only.md" {
 		t.Errorf("expected server-only file in toDownload, got %v", resp.ToDownload)
+	}
+}
+
+func TestHandleFileCheck_UpToDate(t *testing.T) {
+	h, q, s, _ := setupHandler(t)
+	q.CreateVault("personal")
+	s.WriteFile("personal", "notes/hello.md", []byte("content"))
+	q.CreateFile("personal", "notes/hello.md", "samehash")
+	base := int64(1)
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:  "fileCheck",
+		Vault: "personal",
+		Path:  "notes/hello.md",
+		File: &FilePayload{
+			Path:        "notes/hello.md",
+			Exists:      true,
+			BaseVersion: &base,
+			LocalHash:   "samehash",
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if resp.Action != "upToDate" {
+		t.Fatalf("expected action=upToDate, got %q", resp.Action)
+	}
+}
+
+func TestHandleFileCheck_UpdateMeta(t *testing.T) {
+	h, q, s, _ := setupHandler(t)
+	q.CreateVault("personal")
+	s.WriteFile("personal", "notes/hello.md", []byte("content"))
+	sf, err := q.CreateFile("personal", "notes/hello.md", "hash1")
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	t.Logf("server file: %#v", sf)
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:  "fileCheck",
+		Vault: "personal",
+		Path:  "notes/hello.md",
+		File: &FilePayload{
+			Path:      "notes/hello.md",
+			Exists:    true,
+			LocalHash: "hash1",
+		},
+	}))
+
+	resp := readResponse(t, c)
+	t.Logf("updateMeta response: %#v", resp)
+	if resp.Action != "updateMeta" {
+		t.Fatalf("expected action=updateMeta, got %q", resp.Action)
+	}
+	if resp.Meta == nil || resp.Meta.ServerVersion != 1 || resp.Meta.ServerHash != "hash1" {
+		t.Fatalf("expected updateMeta meta for server version 1, got %#v", resp.Meta)
+	}
+}
+
+func TestHandleFileCheck_Put(t *testing.T) {
+	h, q, s, _ := setupHandler(t)
+	q.CreateVault("personal")
+	s.WriteFile("personal", "notes/hello.md", []byte("content"))
+	sf, err := q.CreateFile("personal", "notes/hello.md", "oldhash")
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	sf, err = q.UpdateFile("personal", "notes/hello.md", "newhash")
+	if err != nil {
+		t.Fatalf("update file: %v", err)
+	}
+	t.Logf("server file: %#v", sf)
+	base := int64(2)
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:  "fileCheck",
+		Vault: "personal",
+		Path:  "notes/hello.md",
+		File: &FilePayload{
+			Path:        "notes/hello.md",
+			Exists:      true,
+			BaseVersion: &base,
+			LocalHash:   "hash-from-client",
+		},
+	}))
+
+	resp := readResponse(t, c)
+	t.Logf("put response: %#v", resp)
+	if resp.Action != "put" {
+		t.Fatalf("expected action=put, got %q", resp.Action)
+	}
+	if resp.Meta == nil || resp.Meta.ServerVersion != 2 || resp.Meta.ServerHash != "newhash" {
+		t.Fatalf("expected put meta for server version 2, got %#v", resp.Meta)
+	}
+}
+
+func TestHandleFileCheck_ToDeleteLocal(t *testing.T) {
+	h, q, s, _ := setupHandler(t)
+	q.CreateVault("personal")
+	s.WriteFile("personal", "notes/old.md", []byte("content"))
+	q.CreateFile("personal", "notes/old.md", "hash1")
+	q.DeleteFile("personal", "notes/old.md")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:  "fileCheck",
+		Vault: "personal",
+		Path:  "notes/old.md",
+		File: &FilePayload{
+			Path:      "notes/old.md",
+			Exists:    true,
+			LocalHash: "hash1",
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if resp.Action != "toDeleteLocal" {
+		t.Fatalf("expected action=toDeleteLocal, got %q", resp.Action)
+	}
+	if resp.Meta == nil || !resp.Meta.IsDeleted || resp.Meta.ServerVersion != 2 {
+		t.Fatalf("expected tombstone meta for server version 2, got %#v", resp.Meta)
+	}
+}
+
+func TestHandleFileCheck_Conflict(t *testing.T) {
+	h, q, s, _ := setupHandler(t)
+	q.CreateVault("personal")
+	s.WriteFile("personal", "notes/conflict.md", []byte("server"))
+	q.CreateFile("personal", "notes/conflict.md", "hash1")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:  "fileCheck",
+		Vault: "personal",
+		Path:  "notes/conflict.md",
+		File: &FilePayload{
+			Path:      "notes/conflict.md",
+			Exists:    true,
+			LocalHash: "localhash",
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if resp.Action != "conflict" {
+		t.Fatalf("expected action=conflict, got %q", resp.Action)
+	}
+	if resp.Conflict == nil || resp.Conflict.ServerVersion != 1 {
+		t.Fatalf("expected conflict server version 1, got %#v", resp.Conflict)
+	}
+}
+
+func TestHandleFileCheck_DeleteConflict(t *testing.T) {
+	h, q, s, _ := setupHandler(t)
+	q.CreateVault("personal")
+	s.WriteFile("personal", "notes/tomb.md", []byte("stale"))
+	q.CreateFile("personal", "notes/tomb.md", "serverhash")
+	q.DeleteFile("personal", "notes/tomb.md")
+	base := int64(1)
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:  "fileCheck",
+		Vault: "personal",
+		Path:  "notes/tomb.md",
+		File: &FilePayload{
+			Path:        "notes/tomb.md",
+			Exists:      true,
+			BaseVersion: &base,
+			LocalHash:   "clienthash",
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if resp.Action != "deleteConflict" {
+		t.Fatalf("expected action=deleteConflict, got %q", resp.Action)
+	}
+	if resp.Conflict == nil || resp.Conflict.ServerVersion != 2 || resp.Conflict.IsDeleted != true {
+		t.Fatalf("expected tombstone deleteConflict payload, got %#v", resp.Conflict)
 	}
 }
 
@@ -448,7 +640,7 @@ func TestHandleFileCreate_TombstoneReuse(t *testing.T) {
 		File: &FilePayload{
 			Exists:      true,
 			BaseVersion: int64Ptr(2),
-			LocalHash: "newhash",
+			LocalHash:   "newhash",
 		},
 	}))
 

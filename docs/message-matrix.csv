@@ -1,0 +1,57 @@
+﻿구분,클라이언트 메시지,클라이언트 파일,클라이언트 baseVersion,서버 파일 상태,버전 비교,해시 비교,서버 행동,서버 메시지,서버 메시지 내용,비고
+초기 동기화,syncInit,있음,없음,없음,해당없음,해당없음,없음,syncResult,toPut,클라이언트 큐 선처리 이후 서버에 없는 로컬 파일을 저장. 후속 filePut은 baseVersion=null로 전달
+초기 동기화,syncInit,있음,없음,있음,해당없음,localHash == serverHash,없음,syncResult,toUpdateMeta,처음 보는 파일이지만 서버와 내용이 같으므로 메타만 저장
+초기 동기화,syncInit,있음,없음,있음,해당없음,localHash != serverHash,없음,syncResult,conflict,처음 보는 파일인데 서버와 내용이 다름
+초기 동기화,syncInit,있음,없음,삭제됨,해당없음,localHash == serverHash,없음,syncResult,toDeleteLocal,처음 보는 경로지만 삭제된 서버 파일의 마지막 내용과 같으므로 로컬 파일을 삭제하고 tombstone 메타 저장
+초기 동기화,syncInit,있음,없음,삭제됨,해당없음,localHash != serverHash,없음,syncResult,deleteConflict,처음 보는 경로인데 서버는 tombstone이고 로컬 내용은 삭제 전 서버 내용과 다름
+초기 동기화,syncInit,있음,있음,삭제됨,baseVersion == serverVersion,localHash == serverHash,없음,syncResult,toDeleteLocal,클라이언트가 아는 tombstone과 같은 내용이므로 로컬 파일을 삭제하고 tombstone 메타 저장
+초기 동기화,syncInit,있음,있음,삭제됨,baseVersion == serverVersion,localHash != serverHash,없음,syncResult,toPut,삭제 후 같은 이름으로 다시 생성된 파일이므로 tombstone baseVersion 그대로 filePut에 전달. 후속 filePut은 현재 판단에 사용한 baseVersion을 그대로 전달
+초기 동기화,syncInit,있음,있음,삭제됨,baseVersion != serverVersion,localHash == serverHash,없음,syncResult,toDeleteLocal,서버 tombstone 버전이 달라졌지만 현재 tombstone 내용과 같으므로 로컬 파일을 삭제하고 최신 tombstone 메타 저장
+초기 동기화,syncInit,있음,있음,삭제됨,baseVersion != serverVersion,localHash != serverHash,없음,syncResult,deleteConflict,마지막 동기화 이후 서버 tombstone이 바뀌었고 로컬 내용도 다름
+초기 동기화,syncInit,있음,있음,있음,baseVersion == serverVersion,localHash == serverHash,없음,syncResult,none,이미 최신 상태
+초기 동기화,syncInit,있음,있음,있음,baseVersion == serverVersion,localHash != serverHash,없음,syncResult,toPut,서버가 안 바뀌었으므로 로컬 내용을 서버에 저장. 후속 filePut은 현재 판단에 사용한 baseVersion을 그대로 전달
+초기 동기화,syncInit,있음,있음,있음,baseVersion != serverVersion,localHash == serverHash,없음,syncResult,toUpdateMeta,서버 버전만 최신으로 메타 갱신
+초기 동기화,syncInit,있음,있음,있음,baseVersion != serverVersion,localHash != serverHash,없음,syncResult,conflict,서버도 바뀌고 로컬 내용도 서버와 다름
+초기 동기화,syncInit,있음,있음,없음,해당없음,해당없음,없음,syncResult,conflict,baseVersion이 있는데 서버 레코드가 없으면 서버 메타 손실로 보고 자동 재생성하지 않음
+초기 동기화,syncInit,없음,없음,있음,해당없음,해당없음,없음,syncResult,toDownload,처음 보는 서버 파일을 내려받음
+초기 동기화,syncInit,없음,없음,없음,해당없음,해당없음,없음,syncResult,none,양쪽 모두 파일 없음
+초기 동기화,syncInit,없음,없음,삭제됨,해당없음,해당없음,없음,syncResult,none,메타가 없는 클라이언트는 서버 tombstone을 저장하지 않음
+초기 동기화,syncInit,없음,있음,있음,상관없음,해당없음,없음,syncResult,deleteConflict,클라이언트 큐 선처리 이후에도 서버 active면 삭제 전파 실패 또는 서버 변경으로 보고 충돌 표시
+초기 동기화,syncInit,없음,있음,없음,해당없음,해당없음,없음,syncResult,toRemoveMeta,서버 레코드도 로컬 파일도 없으므로 클라이언트 메타 제거
+초기 동기화,syncInit,없음,있음,삭제됨,해당없음,해당없음,없음,syncResult,toUpdateMeta,서버 tombstone 메타를 클라이언트에 반영
+파일 확인,fileCheck,있음,없음,없음,해당없음,해당없음,없음,fileCheckResult,put,서버에 없는 로컬 파일을 저장. 후속 filePut은 baseVersion=null로 전달
+파일 확인,fileCheck,있음,없음,있음,해당없음,localHash == serverHash,없음,fileCheckResult,updateMeta,서버와 내용이 같으므로 메타만 저장
+파일 확인,fileCheck,있음,없음,있음,해당없음,localHash != serverHash,없음,fileCheckResult,conflict,처음 보는 파일인데 서버와 내용이 다름
+파일 확인,fileCheck,있음,없음,삭제됨,해당없음,localHash == serverHash,없음,fileCheckResult,toDeleteLocal,처음 보는 경로지만 삭제된 서버 파일의 마지막 내용과 같으므로 로컬 파일을 삭제하고 tombstone 메타 저장
+파일 확인,fileCheck,있음,없음,삭제됨,해당없음,localHash != serverHash,없음,fileCheckResult,deleteConflict,처음 보는 경로인데 서버는 tombstone이고 로컬 내용은 삭제 전 서버 내용과 다름
+파일 확인,fileCheck,있음,있음,삭제됨,baseVersion == serverVersion,localHash == serverHash,없음,fileCheckResult,toDeleteLocal,클라이언트가 아는 tombstone과 같은 내용이므로 로컬 파일을 삭제하고 tombstone 메타 저장
+파일 확인,fileCheck,있음,있음,삭제됨,baseVersion == serverVersion,localHash != serverHash,없음,fileCheckResult,put,삭제 후 같은 이름으로 다시 생성된 파일이므로 tombstone baseVersion 그대로 filePut에 전달. 후속 filePut은 현재 판단에 사용한 baseVersion을 그대로 전달
+파일 확인,fileCheck,있음,있음,삭제됨,baseVersion != serverVersion,localHash == serverHash,없음,fileCheckResult,toDeleteLocal,서버 tombstone 버전이 달라졌지만 현재 tombstone 내용과 같으므로 로컬 파일을 삭제하고 최신 tombstone 메타 저장
+파일 확인,fileCheck,있음,있음,삭제됨,baseVersion != serverVersion,localHash != serverHash,없음,fileCheckResult,deleteConflict,마지막 동기화 이후 서버 tombstone이 바뀌었고 로컬 내용도 다름
+파일 확인,fileCheck,있음,있음,있음,baseVersion == serverVersion,localHash == serverHash,없음,fileCheckResult,upToDate,이미 최신 상태
+파일 확인,fileCheck,있음,있음,있음,baseVersion == serverVersion,localHash != serverHash,없음,fileCheckResult,put,서버가 안 바뀌었으므로 로컬 내용을 서버에 저장. 후속 filePut은 현재 판단에 사용한 baseVersion을 그대로 전달
+파일 확인,fileCheck,있음,있음,있음,baseVersion != serverVersion,localHash == serverHash,없음,fileCheckResult,updateMeta,서버 버전만 최신으로 메타 갱신
+파일 확인,fileCheck,있음,있음,있음,baseVersion != serverVersion,localHash != serverHash,없음,fileCheckResult,conflict,서버도 바뀌고 로컬 내용도 서버와 다름
+파일 확인,fileCheck,있음,있음,없음,해당없음,해당없음,없음,fileCheckResult,conflict,baseVersion이 있는데 서버 레코드가 없으면 서버 메타 손실로 보고 자동 재생성하지 않음
+파일 저장,filePut,있음,없음,없음,해당없음,해당없음,파일 저장,filePutResult,okUpdateMeta,서버에 새 파일 생성 후 클라이언트 메타 갱신
+파일 저장,filePut,있음,없음,있음,해당없음,localHash == serverHash,없음,filePutResult,okUpdateMeta,이미 같은 내용이므로 클라이언트 메타만 최신화
+파일 저장,filePut,있음,없음,있음,해당없음,localHash != serverHash,없음,filePutResult,conflict,처음 보는 파일인데 서버와 내용이 다름
+파일 저장,filePut,있음,없음,삭제됨,해당없음,localHash == serverHash,없음,filePutResult,toDeleteLocal,처음 보는 경로지만 삭제된 서버 파일의 마지막 내용과 같으므로 로컬 파일을 삭제하고 tombstone 메타 저장
+파일 저장,filePut,있음,없음,삭제됨,해당없음,localHash != serverHash,없음,filePutResult,deleteConflict,처음 보는 경로인데 서버는 tombstone이고 로컬 내용은 삭제 전 서버 내용과 다름
+파일 저장,filePut,있음,있음,삭제됨,baseVersion == serverVersion,localHash == serverHash,없음,filePutResult,toDeleteLocal,클라이언트가 아는 tombstone과 같은 내용이므로 로컬 파일을 삭제하고 tombstone 메타 저장
+파일 저장,filePut,있음,있음,삭제됨,baseVersion == serverVersion,localHash != serverHash,파일 저장,filePutResult,okUpdateMeta,삭제 후 같은 이름으로 다시 생성된 파일이므로 tombstone baseVersion 검증 후 새 active 버전으로 저장하고 메타 갱신
+파일 저장,filePut,있음,있음,삭제됨,baseVersion != serverVersion,localHash == serverHash,없음,filePutResult,toDeleteLocal,서버 tombstone 버전이 달라졌지만 현재 tombstone 내용과 같으므로 로컬 파일을 삭제하고 최신 tombstone 메타 저장
+파일 저장,filePut,있음,있음,삭제됨,baseVersion != serverVersion,localHash != serverHash,없음,filePutResult,deleteConflict,마지막 동기화 이후 서버 tombstone이 바뀌었고 로컬 내용도 다름
+파일 저장,filePut,있음,있음,없음,해당없음,해당없음,없음,filePutResult,conflict,baseVersion이 있는데 서버 레코드가 없으면 서버 메타 손실로 보고 자동 재생성하지 않음
+파일 저장,filePut,있음,있음,있음,baseVersion == serverVersion,localHash == serverHash,없음,filePutResult,okUpdateMeta,이미 같은 내용이므로 클라이언트 메타만 최신화
+파일 저장,filePut,있음,있음,있음,baseVersion == serverVersion,localHash != serverHash,파일 저장,filePutResult,okUpdateMeta,서버가 안 바뀌었으므로 로컬 내용을 저장 후 클라이언트 메타 갱신
+파일 저장,filePut,있음,있음,있음,baseVersion != serverVersion,localHash == serverHash,없음,filePutResult,okUpdateMeta,서버와 이미 같은 내용이므로 클라이언트 메타만 최신화
+파일 저장,filePut,있음,있음,있음,baseVersion != serverVersion,localHash != serverHash,없음,filePutResult,conflict,서버도 바뀌고 로컬 내용도 서버와 다름
+파일 삭제,fileDelete,없음,없음,없음,해당없음,해당없음,없음,fileDeleteResult,okRemoveMeta,삭제할 서버 파일도 클라이언트 메타도 없으므로 메타 제거
+파일 삭제,fileDelete,없음,없음,있음,해당없음,해당없음,없음,fileDeleteResult,deleteConflict,메타 없이 서버 active 파일을 삭제하지 않음
+파일 삭제,fileDelete,없음,없음,삭제됨,해당없음,해당없음,없음,fileDeleteResult,okRemoveMeta,메타 없는 클라이언트는 서버 tombstone을 저장하지 않고 큐만 정리
+파일 삭제,fileDelete,없음,있음,있음,baseVersion == serverVersion,해당없음,파일 삭제,fileDeleteResult,okUpdateMeta,서버가 안 바뀌었으므로 tombstone 생성 후 클라이언트 메타 갱신
+파일 삭제,fileDelete,없음,있음,있음,baseVersion != serverVersion,해당없음,없음,fileDeleteResult,deleteConflict,마지막 동기화 이후 서버가 바뀌었으므로 삭제 충돌 표시
+파일 삭제,fileDelete,없음,있음,없음,해당없음,해당없음,없음,fileDeleteResult,okRemoveMeta,서버 레코드가 없으므로 클라이언트 메타 제거
+파일 삭제,fileDelete,없음,있음,삭제됨,baseVersion == deletedFromVersion,해당없음,없음,fileDeleteResult,okUpdateMeta,이미 성공한 삭제 요청의 재시도이므로 최신 tombstone 메타 갱신
+파일 삭제,fileDelete,없음,있음,삭제됨,baseVersion != deletedFromVersion,해당없음,없음,fileDeleteResult,deleteConflict,클라이언트 삭제 기준 버전과 서버 tombstone의 deletedFromVersion이 다르므로 삭제 충돌 표시

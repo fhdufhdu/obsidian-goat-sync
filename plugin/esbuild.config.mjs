@@ -7,9 +7,9 @@ import { fileURLToPath } from "url";
 const prod = process.argv[2] === "production";
 const pluginDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(pluginDir, "..");
-const outdir = resolve(pluginDir, "dist", "obsidian-sync");
+const bratOutdir = resolve(repoRoot, "build", "brat");
 
-mkdirSync(outdir, { recursive: true });
+mkdirSync(bratOutdir, { recursive: true });
 
 esbuild.build({
   entryPoints: [resolve(pluginDir, "src/main.ts")],
@@ -20,13 +20,9 @@ esbuild.build({
   logLevel: "info",
   sourcemap: prod ? false : "inline",
   treeShaking: true,
-  outfile: resolve(outdir, "main.js"),
+  outfile: resolve(bratOutdir, "main.js"),
   minify: prod,
 }).then(() => {
-  copyFileSync(resolve(pluginDir, "manifest.json"), resolve(outdir, "manifest.json"));
-  copyFileSync(resolve(pluginDir, "styles.css"), resolve(outdir, "styles.css"));
-
-  copyFileSync(resolve(outdir, "main.js"), resolve(repoRoot, "main.js"));
-  copyFileSync(resolve(outdir, "manifest.json"), resolve(repoRoot, "manifest.json"));
-  copyFileSync(resolve(outdir, "styles.css"), resolve(repoRoot, "styles.css"));
+  copyFileSync(resolve(pluginDir, "manifest.json"), resolve(bratOutdir, "manifest.json"));
+  copyFileSync(resolve(pluginDir, "styles.css"), resolve(bratOutdir, "styles.css"));
 }).catch(() => process.exit(1));

@@ -79,7 +79,7 @@ func TestHandleVaultCreate(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "vault_create",
+		Type:  "vaultCreate",
 		Vault: "personal",
 	}))
 
@@ -102,7 +102,7 @@ func TestHandleSyncInit_NoPrev_NoServer(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "sync_init",
+		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
 			{Path: "notes/new.md", LocalHash: "clienthash"},
@@ -137,7 +137,7 @@ func TestHandleSyncInit_WithPrev_SameVersion_DiffHash_ToUpdate(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "sync_init",
+		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
 			{Path: "notes/hello.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "clienthash"},
@@ -170,7 +170,7 @@ func TestHandleSyncInit_Tombstone_ToDelete(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "sync_init",
+		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
 			{Path: "notes/old.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash1"},
@@ -198,18 +198,18 @@ func TestHandleFileCreate_NoFilePayload(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:    "file_create",
+		Type:    "filePut",
 		Vault:   "personal",
 		Path:    "notes/new.md",
 		Content: "# New Note",
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Type != "file_create_result" {
-		t.Fatalf("expected file_create_result, got %s", resp.Type)
+	if resp.Type != "filePutResult" {
+		t.Fatalf("expected filePutResult, got %s", resp.Type)
 	}
-	if resp.Ok == nil || *resp.Ok {
-		t.Fatal("expected ok=false without file payload")
+	if resp.Action != "conflict" {
+		t.Fatalf("expected action=conflict, got %q", resp.Action)
 	}
 	if resp.Error == "" {
 		t.Fatal("expected clear error when file payload is missing")
@@ -233,7 +233,7 @@ func TestHandleSyncInit_NoPrev_ActiveSameHash(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "sync_init",
+		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
 			{Path: "notes/hello.md", LocalHash: "serverhash"},
@@ -259,7 +259,7 @@ func TestHandleSyncInit_NoPrev_ActiveDiffHash(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "sync_init",
+		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
 			{Path: "notes/hello.md", LocalHash: "clienthash"},
@@ -282,7 +282,7 @@ func TestHandleSyncInit_WithPrev_SameVersion_SameHash_Skip(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "sync_init",
+		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
 			{Path: "notes/hello.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash1"},
@@ -306,7 +306,7 @@ func TestHandleSyncInit_WithPrev_OlderVersion_SameClientHash_ToUpdateMeta(t *tes
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "sync_init",
+		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
 			{Path: "notes/hello.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash2"},
@@ -330,7 +330,7 @@ func TestHandleSyncInit_WithPrev_OlderVersion_PrevHashEqClient_ToDownload(t *tes
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "sync_init",
+		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{
 			{Path: "notes/hello.md", BaseVersion: int64Ptr(1), BaseHash: "hash1", LocalHash: "hash1"},
@@ -353,7 +353,7 @@ func TestHandleSyncInit_ServerOnlyFile_ToDownload(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "sync_init",
+		Type:  "syncInit",
 		Vault: "personal",
 		Files: []FilePayload{},
 	}))
@@ -373,21 +373,22 @@ func TestHandleFileCreate_New(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:    "file_create",
+		Type:    "filePut",
 		Vault:   "personal",
 		Path:    "notes/new.md",
 		Content: "# New Note",
 		File: &FilePayload{
+			Exists:    true,
 			LocalHash: "hash1",
 		},
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Type != "file_create_result" {
-		t.Fatalf("expected file_create_result, got %s", resp.Type)
+	if resp.Type != "filePutResult" {
+		t.Fatalf("expected filePutResult, got %s", resp.Type)
 	}
-	if resp.Ok == nil || !*resp.Ok {
-		t.Fatal("expected ok=true")
+	if resp.Action != "okUpdateMeta" {
+		t.Fatalf("expected action=okUpdateMeta, got %s", resp.Action)
 	}
 	assertResponseMetaVersion(t, resp, 1)
 
@@ -407,18 +408,19 @@ func TestHandleFileCreate_ActiveConflict(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:    "file_create",
+		Type:    "filePut",
 		Vault:   "personal",
 		Path:    "notes/existing.md",
 		Content: "conflicting content",
 		File: &FilePayload{
+			Exists:    true,
 			LocalHash: "newhash",
 		},
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Ok == nil || *resp.Ok {
-		t.Fatal("expected ok=false for active file conflict")
+	if resp.Action != "conflict" {
+		t.Fatalf("expected action=conflict, got %s", resp.Action)
 	}
 	if resp.Conflict == nil {
 		t.Fatal("expected conflict info")
@@ -439,20 +441,84 @@ func TestHandleFileCreate_TombstoneReuse(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:    "file_create",
+		Type:    "filePut",
 		Vault:   "personal",
 		Path:    "notes/old.md",
 		Content: "new content",
 		File: &FilePayload{
+			Exists:      true,
+			BaseVersion: int64Ptr(2),
 			LocalHash: "newhash",
 		},
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Ok == nil || !*resp.Ok {
-		t.Fatal("expected ok=true for tombstone reuse")
+	if resp.Action != "okUpdateMeta" {
+		t.Fatalf("expected action=okUpdateMeta, got %s", resp.Action)
 	}
 	assertResponseMetaVersion(t, resp, 3)
+}
+
+func TestHandleFilePut_NewFile_OKUpdateMeta(t *testing.T) {
+	h, q, s, _ := setupHandler(t)
+	q.CreateVault("personal")
+	s.CreateVaultDir("personal")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:    "filePut",
+		Vault:   "personal",
+		Path:    "notes/new.md",
+		Content: "content",
+		File: &FilePayload{
+			Path:      "notes/new.md",
+			Exists:    true,
+			LocalHash: "hash-new",
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if resp.Type != "filePutResult" || resp.Action != "okUpdateMeta" {
+		t.Fatalf("expected filePutResult okUpdateMeta, got %#v", resp)
+	}
+	if resp.Meta == nil || resp.Meta.ServerVersion != 1 || resp.Meta.ServerHash != "hash-new" {
+		t.Fatalf("bad meta: %#v", resp.Meta)
+	}
+}
+
+func TestHandleFileDelete_TombstoneRetry_OKUpdateMeta(t *testing.T) {
+	h, q, _, _ := setupHandler(t)
+	q.CreateVault("personal")
+	q.CreateFile("personal", "notes/a.md", "hash-a")
+	deleted, err := q.DeleteFile("personal", "notes/a.md")
+	if err != nil {
+		t.Fatalf("delete setup: %v", err)
+	}
+	base := deleted.Version - 1
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:  "fileDelete",
+		Vault: "personal",
+		Path:  "notes/a.md",
+		File: &FilePayload{
+			Path:        "notes/a.md",
+			Exists:      false,
+			BaseVersion: &base,
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if resp.Type != "fileDeleteResult" || resp.Action != "okUpdateMeta" {
+		t.Fatalf("expected fileDeleteResult okUpdateMeta, got %#v", resp)
+	}
+	if resp.Meta == nil || !resp.Meta.IsDeleted || resp.Meta.ServerVersion != deleted.Version {
+		t.Fatalf("bad tombstone meta: %#v", resp.Meta)
+	}
 }
 
 func TestHandleFileUpdate_Success(t *testing.T) {
@@ -465,22 +531,23 @@ func TestHandleFileUpdate_Success(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:    "file_update",
+		Type:    "filePut",
 		Vault:   "personal",
 		Path:    "notes/hello.md",
 		Content: "updated",
 		File: &FilePayload{
+			Exists:      true,
 			BaseVersion: int64Ptr(1),
 			LocalHash:   "newhash",
 		},
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Type != "file_update_result" {
-		t.Fatalf("expected file_update_result, got %s", resp.Type)
+	if resp.Type != "filePutResult" {
+		t.Fatalf("expected filePutResult, got %s", resp.Type)
 	}
-	if resp.Ok == nil || !*resp.Ok {
-		t.Fatal("expected ok=true")
+	if resp.Action != "okUpdateMeta" {
+		t.Fatalf("expected action=okUpdateMeta, got %s", resp.Action)
 	}
 	assertResponseMetaVersion(t, resp, 2)
 
@@ -500,22 +567,23 @@ func TestHandleFileUpdate_Noop(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:    "file_update",
+		Type:    "filePut",
 		Vault:   "personal",
 		Path:    "notes/hello.md",
 		Content: "content",
 		File: &FilePayload{
+			Exists:      true,
 			BaseVersion: int64Ptr(1),
 			LocalHash:   "samehash",
 		},
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Ok == nil || !*resp.Ok {
-		t.Fatal("expected ok=true")
+	if resp.Action != "okUpdateMeta" {
+		t.Fatalf("expected action=okUpdateMeta, got %s", resp.Action)
 	}
-	if resp.Action != "noop" {
-		t.Errorf("expected action=noop, got %s", resp.Action)
+	if resp.Meta == nil || resp.Meta.ServerVersion != 1 {
+		t.Fatalf("bad meta: %#v", resp.Meta)
 	}
 }
 
@@ -530,19 +598,20 @@ func TestHandleFileUpdate_Conflict(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:    "file_update",
+		Type:    "filePut",
 		Vault:   "personal",
 		Path:    "notes/hello.md",
 		Content: "client version",
 		File: &FilePayload{
+			Exists:      true,
 			BaseVersion: int64Ptr(1),
 			LocalHash:   "clienthash",
 		},
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Ok == nil || *resp.Ok {
-		t.Fatal("expected ok=false for conflict")
+	if resp.Action != "conflict" {
+		t.Fatalf("expected action=conflict, got %s", resp.Action)
 	}
 	if resp.Conflict == nil {
 		t.Fatal("expected conflict info")
@@ -562,20 +631,21 @@ func TestHandleFileDelete_Success(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "file_delete",
+		Type:  "fileDelete",
 		Vault: "personal",
 		Path:  "notes/old.md",
 		File: &FilePayload{
+			Exists:      false,
 			BaseVersion: int64Ptr(1),
 		},
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Type != "file_delete_result" {
-		t.Fatalf("expected file_delete_result, got %s", resp.Type)
+	if resp.Type != "fileDeleteResult" {
+		t.Fatalf("expected fileDeleteResult, got %s", resp.Type)
 	}
-	if resp.Ok == nil || !*resp.Ok {
-		t.Fatal("expected ok=true")
+	if resp.Action != "okUpdateMeta" {
+		t.Fatalf("expected action=okUpdateMeta, got %s", resp.Action)
 	}
 	assertResponseMetaVersion(t, resp, 2)
 
@@ -596,17 +666,18 @@ func TestHandleFileDelete_Conflict(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "file_delete",
+		Type:  "fileDelete",
 		Vault: "personal",
 		Path:  "notes/hello.md",
 		File: &FilePayload{
+			Exists:      false,
 			BaseVersion: int64Ptr(1),
 		},
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Ok == nil || *resp.Ok {
-		t.Fatal("expected ok=false for conflict")
+	if resp.Action != "deleteConflict" {
+		t.Fatalf("expected action=deleteConflict, got %s", resp.Action)
 	}
 	if resp.Conflict == nil {
 		t.Fatal("expected conflict info")
@@ -621,7 +692,7 @@ func TestHandleFileDelete_NonExistent_Noop(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:  "file_delete",
+		Type:  "fileDelete",
 		Vault: "personal",
 		Path:  "notes/nonexistent.md",
 		File: &FilePayload{
@@ -630,11 +701,11 @@ func TestHandleFileDelete_NonExistent_Noop(t *testing.T) {
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Type != "file_delete_result" {
-		t.Fatalf("expected file_delete_result, got %s", resp.Type)
+	if resp.Type != "fileDeleteResult" {
+		t.Fatalf("expected fileDeleteResult, got %s", resp.Type)
 	}
-	if resp.Ok == nil || !*resp.Ok {
-		t.Fatal("expected ok=true for nonexistent (idempotent)")
+	if resp.Action != "okRemoveMeta" {
+		t.Fatalf("expected action=okRemoveMeta, got %s", resp.Action)
 	}
 }
 
@@ -648,7 +719,7 @@ func TestHandleConflictResolve_LocalUpdate_Success(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:       "conflict_resolve",
+		Type:       "conflictResolve",
 		Vault:      "personal",
 		Path:       "notes/hello.md",
 		Resolution: "local",
@@ -680,7 +751,7 @@ func TestHandleConflictResolve_LocalUpdate_Reconflict(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:       "conflict_resolve",
+		Type:       "conflictResolve",
 		Vault:      "personal",
 		Path:       "notes/hello.md",
 		Resolution: "local",
@@ -710,7 +781,7 @@ func TestHandleConflictResolve_LocalDelete_Success(t *testing.T) {
 	h.hub.Register <- c
 
 	h.HandleMessage(c, mustJSON(IncomingMessage{
-		Type:       "conflict_resolve",
+		Type:       "conflictResolve",
 		Vault:      "personal",
 		Path:       "notes/old.md",
 		Resolution: "local",

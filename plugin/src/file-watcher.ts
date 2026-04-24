@@ -13,6 +13,8 @@ export class FileWatcher {
   private vault: Vault;
   private onChange: (change: FileChange) => void;
   private eventHandlers: Array<{ name: string; handler: (file: TAbstractFile) => void }> = [];
+  private pendingChangeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly debounceMs = 75;
 
   constructor(
     vault: Vault,
@@ -25,19 +27,19 @@ export class FileWatcher {
   start() {
     const onCreate = (file: TAbstractFile) => {
       if (file instanceof TFile && !isExcluded(file.path)) {
-        this.onChange({ type: "create", path: file.path });
+        this.scheduleChange({ type: "create", path: file.path });
       }
     };
 
     const onModify = (file: TAbstractFile) => {
       if (file instanceof TFile && !isExcluded(file.path)) {
-        this.onChange({ type: "modify", path: file.path });
+        this.scheduleChange({ type: "modify", path: file.path });
       }
     };
 
     const onDelete = (file: TAbstractFile) => {
       if (file instanceof TFile && !isExcluded(file.path)) {
-        this.onChange({ type: "delete", path: file.path });
+        this.scheduleChange({ type: "delete", path: file.path });
       }
     };
 
@@ -56,7 +58,22 @@ export class FileWatcher {
     for (const { name, handler } of this.eventHandlers) {
       this.vault.off(name, handler);
     }
+    for (const timer of this.pendingChangeTimers.values()) {
+      clearTimeout(timer);
+    }
     this.eventHandlers = [];
+    this.pendingChangeTimers = new Map();
+  }
+
+  private scheduleChange(change: FileChange) {
+    const existing = this.pendingChangeTimers.get(change.path);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      this.pendingChangeTimers.delete(change.path);
+      this.onChange(change);
+    }, this.debounceMs);
+    this.pendingChangeTimers.set(change.path, timer);
   }
 
   async getAllFiles(): Promise<{ path: string }[]> {

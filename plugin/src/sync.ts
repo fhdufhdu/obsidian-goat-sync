@@ -3,7 +3,12 @@ import { WsClient, ServerMessage, SyncConflictEntry, DownloadEntry, FilePayload 
 import { FileWatcher } from "./file-watcher";
 import { FileMetaStore } from "./file-meta-store";
 import { ConflictQueue, ConflictEntry } from "./conflict-queue";
+import { DeleteQueue } from "./delete-queue";
+import { DirtyQueue } from "./dirty-queue";
+import { BlockedPaths } from "./blocked-paths";
+import { SelfWriteSuppress } from "./self-write-suppress";
 import { ConflictModal } from "./conflict-modal";
+import { SyncOrchestrator, FlushResult } from "./sync-orchestrator";
 import { sha256 } from "./hash";
 
 const BINARY_EXTENSIONS = new Set([
@@ -54,6 +59,11 @@ export class SyncManager {
   private vaultName: string;
   private conflictQueue: ConflictQueue;
   private conflictModal: ConflictModal | null = null;
+  private deleteQueue: DeleteQueue;
+  private dirtyQueue: DirtyQueue;
+  private blockedPaths: BlockedPaths;
+  private selfWriteSuppress: SelfWriteSuppress;
+  private orchestrator: SyncOrchestrator;
   private syncing = false;
 
   constructor(
@@ -63,6 +73,7 @@ export class SyncManager {
     token: string,
     vaultName: string,
     fileMeta: FileMetaStore,
+    deleteQueuePath: string,
   ) {
     this.app = app;
     this.vault = vault;
@@ -70,6 +81,16 @@ export class SyncManager {
     this.fileMeta = fileMeta;
     this.wsClient = new WsClient(serverUrl, token);
     this.conflictQueue = new ConflictQueue();
+    this.deleteQueue = new DeleteQueue(this.vault.adapter, deleteQueuePath);
+    this.dirtyQueue = new DirtyQueue();
+    this.blockedPaths = new BlockedPaths();
+    this.selfWriteSuppress = new SelfWriteSuppress();
+    this.orchestrator = new SyncOrchestrator({
+      flushDeleteQueue: () => this.flushDeleteQueue(),
+      flushDirtyQueue: () => this.flushDirtyQueue(),
+      runSyncInit: () => this.performSyncInit(),
+      notifyTransientFailure: () => new Notice("[obsidian-goat-sync] 서버 연결이 불안정해서 동기화가 중지됩니다"),
+    });
     this.fileWatcher = new FileWatcher(
       vault,
       (change) => this.handleLocalChange(change),
@@ -82,14 +103,19 @@ export class SyncManager {
     this.wsClient.on("fileDeleteResult", (msg) => this.handleFileDeleteResult(msg));
     this.wsClient.on("file_check_result", (msg) => this.handleFileCheckResult(msg));
     this.wsClient.on("conflict_resolve_result", (msg) => this.handleConflictResolveResult(msg));
-    this.wsClient.on("reconnected", () => this.performSyncInit());
+    this.wsClient.on("reconnected", () => {
+      this.orchestrator.runStartupSync().catch((err) => {
+        console.error("[obsidian-goat-sync] Reconnected sync failed:", err);
+      });
+    });
 
     this.fileWatcher.start();
     this.wsClient.startHealthCheck();
 
     try {
+      await this.deleteQueue.load();
       await this.wsClient.connect();
-      await this.performSyncInit();
+      await this.orchestrator.runStartupSync();
       return true;
     } catch (err) {
       console.error("[obsidian-goat-sync] Initial connect failed, healthcheck will retry:", err);
@@ -105,73 +131,64 @@ export class SyncManager {
 
   private async performSyncInit() {
     const localFiles = await this.fileWatcher.getAllFiles();
-    const files = await Promise.all(
-      localFiles.map(async ({ path }) => {
-        const hash = await this.computeFileHash(path);
-        if (hash === null) return null;
-        const meta = this.fileMeta.get(path);
-        return {
-          path,
-          exists: true,
-          baseVersion: meta?.prevServerVersion,
-          baseHash: meta?.prevServerHash,
-          localHash: hash,
-        };
-      }),
-    );
-    const validFiles = files.filter((f): f is FilePayload => f !== null);
+    const localPaths = new Set(localFiles.map((f) => f.path));
+    const files: FilePayload[] = [];
+
+    for (const { path } of localFiles) {
+      if (this.blockedPaths.has(path)) continue;
+      const localHash = await this.computeFileHash(path);
+      if (localHash === null) continue;
+      const meta = this.fileMeta.get(path);
+      files.push({
+        path,
+        exists: true,
+        baseVersion: meta?.prevServerVersion,
+        baseHash: meta?.prevServerHash,
+        localHash,
+      });
+    }
+
+    for (const [path, meta] of this.fileMeta.entries()) {
+      if (localPaths.has(path) || this.blockedPaths.has(path)) continue;
+      files.push({
+        path,
+        exists: false,
+        baseVersion: meta.prevServerVersion,
+        baseHash: meta.prevServerHash,
+      });
+    }
+
+    const validFiles = files;
     this.wsClient.sendSyncInit(this.vaultName, validFiles);
   }
 
   private async handleLocalChange(change: { type: "create" | "modify" | "delete"; path: string }) {
-    if (this.syncing) return;
-
     if (change.type === "delete") {
+      this.blockedPaths.clear(change.path);
+      const exists = await this.vault.adapter.exists(change.path);
+      if (this.selfWriteSuppress.consumeDelete(change.path, exists)) return;
+
       const meta = this.fileMeta.get(change.path);
       if (meta) {
-        this.wsClient.sendFileDelete(this.vaultName, {
-          path: change.path,
-          exists: false,
-          baseVersion: meta.prevServerVersion,
-          baseHash: meta.prevServerHash,
-        });
+        await this.deleteQueue.enqueue({ path: change.path, baseVersion: meta.prevServerVersion, serverHash: meta.prevServerHash });
+        await this.dirtyQueue.remove(change.path);
       }
+      this.orchestrator.runIntervalWorker().catch((err) => {
+        console.error("[obsidian-goat-sync] Failed to run interval sync:", err);
+      });
       return;
     }
 
-    const content = await this.readFileContent(change.path);
-    if (content === null) return;
+    this.blockedPaths.clear(change.path);
+    const hash = await this.computeFileHash(change.path);
+    if (hash === null) return;
+    if (this.selfWriteSuppress.consumeWrite(change.path, hash)) return;
 
-    const hash = await this.computeHashFromContent(change.path, content);
-    const encoding = isBinaryPath(change.path) ? "base64" : undefined;
-
-    if (change.type === "create") {
-      this.wsClient.sendFilePut(this.vaultName, change.path, content, {
-        path: change.path,
-        exists: true,
-        localHash: hash,
-      }, encoding);
-    } else {
-      const meta = this.fileMeta.get(change.path);
-      if (meta && meta.prevServerHash === hash) {
-        return;
-      }
-      if (meta) {
-        this.wsClient.sendFilePut(this.vaultName, change.path, content, {
-          path: change.path,
-          exists: true,
-          baseVersion: meta.prevServerVersion,
-          baseHash: meta.prevServerHash,
-          localHash: hash,
-        }, encoding);
-      } else {
-        this.wsClient.sendFilePut(this.vaultName, change.path, content, {
-          path: change.path,
-          exists: true,
-          localHash: hash,
-        }, encoding);
-      }
-    }
+    const meta = this.fileMeta.get(change.path);
+    await this.dirtyQueue.enqueue({ path: change.path, baseVersion: meta?.prevServerVersion, lastSeenHash: hash });
+    this.orchestrator.runIntervalWorker().catch((err) => {
+      console.error("[obsidian-goat-sync] Failed to run interval sync:", err);
+    });
   }
 
   private async handleSyncResult(msg: ServerMessage) {
@@ -186,11 +203,7 @@ export class SyncManager {
       if (msg.toDeleteLocal) {
         for (const entry of msg.toDeleteLocal) {
           if (!entry.path) continue;
-          await this.deleteLocalFile(entry.path);
-          this.fileMeta.set(entry.path, {
-            prevServerVersion: entry.serverVersion,
-            prevServerHash: entry.serverHash || "",
-          });
+          await this.applyServerDelete(entry.path, entry.serverVersion, entry.serverHash || "");
         }
       }
 
@@ -212,7 +225,7 @@ export class SyncManager {
 
       if (msg.toPut) {
         for (const path of msg.toPut) {
-          await this.uploadFile(path);
+          await this.updateFile(path);
         }
       }
 
@@ -234,34 +247,26 @@ export class SyncManager {
         prevServerVersion: msg.meta.serverVersion,
         prevServerHash: msg.meta.serverHash || "",
       });
-    } else if (msg.action === "toDeleteLocal" && msg.meta) {
-      this.syncing = true;
-      try {
-        await this.deleteLocalFile(msg.path);
-      } finally {
-        this.syncing = false;
+      const entry = this.dirtyQueue.get(msg.path);
+      if (entry?.sentHash) {
+        await this.dirtyQueue.completeSuccess(msg.path, entry.sentHash, {
+          serverVersion: msg.meta.serverVersion,
+          serverHash: msg.meta.serverHash || "",
+        });
       }
-      this.fileMeta.set(msg.path, {
-        prevServerVersion: msg.meta.serverVersion,
-        prevServerHash: msg.meta.serverHash || "",
-      });
+    } else if (msg.action === "toDeleteLocal" && msg.meta) {
+      await this.applyServerDelete(msg.path, msg.meta.serverVersion, msg.meta.serverHash || "");
+      await this.dirtyQueue.remove(msg.path);
     } else if ((msg.action === "conflict" || msg.action === "deleteConflict") && msg.conflict) {
-      const clientContent = await this.readFileContent(msg.path) || "";
-      const clientHash = await this.computeHashFromContent(msg.path, clientContent);
-      const entry: ConflictEntry = {
+      await this.dirtyQueue.remove(msg.path);
+      this.blockedPaths.block({
         path: msg.path,
-        prevServerVersion: msg.conflict.serverVersion,
-        currentClientContent: clientContent,
-        currentClientHash: clientHash,
-        currentServerVersion: msg.conflict.serverVersion,
-        currentServerHash: msg.conflict.serverHash,
-        currentServerContent: msg.conflict.serverContent,
-        encoding: msg.conflict.encoding,
-        kind: msg.action === "deleteConflict" ? "delete" : "modify",
-        conflictPath: makeConflictPath(msg.path),
-      };
-      this.conflictQueue.add(entry);
-      this.openConflictModal();
+        reason: msg.action === "deleteConflict" ? "deleteConflict" : "conflict",
+        serverVersion: msg.conflict.serverVersion,
+        serverHash: msg.conflict.serverHash,
+        isDeleted: msg.action === "deleteConflict",
+      });
+      await this.enqueueLatestConflict(msg);
     }
   }
 
@@ -269,25 +274,23 @@ export class SyncManager {
     if (!msg.path) return;
     if (msg.action === "okRemoveMeta") {
       this.fileMeta.remove(msg.path);
+      await this.deleteQueue.remove(msg.path);
     } else if (msg.action === "okUpdateMeta" && msg.meta) {
       this.fileMeta.set(msg.path, {
         prevServerVersion: msg.meta.serverVersion,
         prevServerHash: msg.meta.serverHash || "",
       });
+      await this.deleteQueue.remove(msg.path);
     } else if (msg.action === "deleteConflict" && msg.conflict) {
-      const entry: ConflictEntry = {
+      await this.deleteQueue.remove(msg.path);
+      this.blockedPaths.block({
         path: msg.path,
-        prevServerVersion: msg.conflict.serverVersion,
-        currentClientContent: "",
-        currentClientHash: "",
-        currentServerVersion: msg.conflict.serverVersion,
-        currentServerHash: msg.conflict.serverHash,
-        currentServerContent: msg.conflict.serverContent,
-        encoding: msg.conflict.encoding,
-        kind: "delete",
-      };
-      this.conflictQueue.add(entry);
-      this.openConflictModal();
+        reason: "deleteConflict",
+        serverVersion: msg.conflict.serverVersion,
+        serverHash: msg.conflict.serverHash,
+        isDeleted: true,
+      });
+      await this.enqueueLatestConflict(msg);
     }
   }
 
@@ -322,40 +325,17 @@ export class SyncManager {
         }
         break;
       case "put":
-        await this.uploadFile(msg.path);
+        await this.updateFile(msg.path);
         break;
       case "conflict":
       case "deleteConflict":
         if (msg.conflict) {
-          const clientContent = await this.readFileContent(msg.path) || "";
-          const clientHash = await this.computeHashFromContent(msg.path, clientContent);
-          const entry: ConflictEntry = {
-            path: msg.path,
-            currentClientContent: clientContent,
-            currentClientHash: clientHash,
-            currentServerVersion: msg.conflict.serverVersion,
-            currentServerHash: msg.conflict.serverHash,
-            currentServerContent: msg.conflict.serverContent,
-            encoding: msg.conflict.encoding,
-            kind: msg.action === "deleteConflict" ? "delete" : "modify",
-            conflictPath: makeConflictPath(msg.path),
-          };
-          this.conflictQueue.add(entry);
-          this.openConflictModal();
+          await this.enqueueLatestConflict(msg);
         }
         break;
       case "toDeleteLocal":
-        this.syncing = true;
-        try {
-          await this.deleteLocalFile(msg.path);
-        } finally {
-          this.syncing = false;
-        }
         if (msg.meta) {
-          this.fileMeta.set(msg.path, {
-            prevServerVersion: msg.meta.serverVersion,
-            prevServerHash: msg.meta.serverHash || "",
-          });
+          await this.applyServerDelete(msg.path, msg.meta.serverVersion, msg.meta.serverHash || "");
         }
         break;
       case "toRemoveMeta":
@@ -481,24 +461,33 @@ export class SyncManager {
     this.conflictQueue.add(entry);
   }
 
+  private async enqueueLatestConflict(msg: ServerMessage): Promise<void> {
+    if (!msg.path || !msg.conflict) return;
+
+    const clientContent = await this.readFileContent(msg.path) || "";
+    const clientHash = await this.computeHashFromContent(msg.path, clientContent);
+    const entry: ConflictEntry = {
+      path: msg.path,
+      prevServerVersion: msg.conflict.serverVersion,
+      currentClientContent: clientContent,
+      currentClientHash: clientHash,
+      currentServerVersion: msg.conflict.serverVersion,
+      currentServerHash: msg.conflict.serverHash,
+      currentServerContent: msg.conflict.serverContent,
+      encoding: msg.conflict.encoding,
+      kind: msg.action === "deleteConflict" ? "delete" : "modify",
+      conflictPath: makeConflictPath(msg.path),
+    };
+    this.conflictQueue.add(entry);
+    this.openConflictModal();
+  }
+
   private openConflictModal() {
     if (this.conflictModal && this.conflictModal.containerEl.isConnected) {
       return;
     }
     this.conflictModal = new ConflictModal(this.app, this.conflictQueue, this);
     this.conflictModal.open();
-  }
-
-  private async uploadFile(path: string) {
-    const content = await this.readFileContent(path);
-    if (content === null) return;
-    const hash = await this.computeHashFromContent(path, content);
-    const encoding = isBinaryPath(path) ? "base64" : undefined;
-    this.wsClient.sendFilePut(this.vaultName, path, content, {
-      path,
-      exists: true,
-      localHash: hash,
-    }, encoding);
   }
 
   private async updateFile(path: string) {
@@ -522,15 +511,104 @@ export class SyncManager {
       baseVersion: meta.prevServerVersion,
       baseHash: meta.prevServerHash,
       localHash: hash,
-    }, encoding);
+      }, encoding);
   }
 
   private async applyDownloadEntry(entry: DownloadEntry) {
+    const localHash = entry.encoding === "base64"
+      ? await sha256(base64ToArrayBuffer(entry.content))
+      : await sha256(entry.content);
+    this.selfWriteSuppress.addWrite(entry.path, localHash, Date.now() + 5000);
     await this.writeFileContent(entry.path, entry.content, entry.encoding);
     this.fileMeta.set(entry.path, {
       prevServerVersion: entry.serverVersion,
       prevServerHash: entry.serverHash,
     });
+  }
+
+  private async applyServerDelete(path: string, serverVersion: number, serverHash: string): Promise<void> {
+    this.selfWriteSuppress.addDelete(path, Date.now() + 5000);
+    await this.deleteQueue.remove(path);
+    await this.deleteLocalFile(path);
+    this.fileMeta.set(path, {
+      prevServerVersion: serverVersion,
+      prevServerHash: serverHash,
+    });
+  }
+
+  private async flushDeleteQueue(): Promise<FlushResult> {
+    const entries = this.deleteQueue.list();
+    for (const entry of entries) {
+      if (entry.status !== "pending" && entry.status !== "retryableFailed") continue;
+
+      try {
+        const exists = await this.vault.adapter.exists(entry.path);
+        if (exists) {
+          await this.deleteQueue.remove(entry.path);
+          const hash = await this.computeFileHash(entry.path);
+          await this.dirtyQueue.enqueue({
+            path: entry.path,
+            baseVersion: entry.baseVersion,
+            lastSeenHash: hash || this.fileMeta.get(entry.path)?.prevServerHash || "",
+          });
+          continue;
+        }
+
+        const payloadBaseHash = this.fileMeta.get(entry.path)?.prevServerHash || entry.serverHash;
+        this.wsClient.sendFileDelete(this.vaultName, {
+          path: entry.path,
+          exists: false,
+          baseVersion: entry.baseVersion,
+          baseHash: payloadBaseHash,
+        });
+      } catch (err) {
+        console.error("[obsidian-goat-sync] Failed to flush delete queue entry:", err);
+        await this.deleteQueue.remove(entry.path);
+        return "transientFailure";
+      }
+    }
+    return "ok";
+  }
+
+  private async flushDirtyQueue(): Promise<FlushResult> {
+    while (true) {
+      const next = await this.dirtyQueue.claimNext();
+      if (!next) return "ok";
+
+      try {
+        await this.putDirtyFile(next);
+      } catch (err) {
+        console.error("[obsidian-goat-sync] Failed to flush dirty queue entry:", err);
+        await this.dirtyQueue.completeRetryableFailure(next.path);
+        return "transientFailure";
+      }
+    }
+  }
+
+  private async putDirtyFile(snapshot: { path: string; baseVersion?: number; lastSeenHash: string }): Promise<void> {
+    const content = await this.readFileContent(snapshot.path);
+    if (content === null) {
+      await this.dirtyQueue.remove(snapshot.path);
+      if (snapshot.baseVersion !== undefined) {
+        await this.deleteQueue.enqueue({
+          path: snapshot.path,
+          baseVersion: snapshot.baseVersion,
+          serverHash: this.fileMeta.get(snapshot.path)?.prevServerHash || "",
+        });
+      }
+      return;
+    }
+
+    const hash = await this.computeHashFromContent(snapshot.path, content);
+    const encoding = isBinaryPath(snapshot.path) ? "base64" : undefined;
+    await this.dirtyQueue.markSentHash(snapshot.path, snapshot.lastSeenHash, hash);
+
+    const payload: FilePayload = { path: snapshot.path, exists: true, localHash: hash };
+    if (snapshot.baseVersion !== undefined) {
+      payload.baseVersion = snapshot.baseVersion;
+      payload.baseHash = this.fileMeta.get(snapshot.path)?.prevServerHash;
+    }
+    this.wsClient.sendFilePut(this.vaultName, snapshot.path, content, payload, encoding);
   }
 
   private async writeFileContent(path: string, content: string, encoding?: string): Promise<void> {

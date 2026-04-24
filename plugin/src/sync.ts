@@ -1,7 +1,7 @@
 import { App, Notice, Vault, normalizePath } from "obsidian";
-import { WsClient, ServerMessage, SyncConflictEntry, DownloadEntry } from "./ws-client";
+import { WsClient, ServerMessage, SyncConflictEntry, DownloadEntry, FilePayload } from "./ws-client";
 import { FileWatcher } from "./file-watcher";
-import { FileMetaStore, FileMeta } from "./file-meta-store";
+import { FileMetaStore } from "./file-meta-store";
 import { ConflictQueue, ConflictEntry } from "./conflict-queue";
 import { ConflictModal } from "./conflict-modal";
 import { sha256 } from "./hash";
@@ -78,9 +78,8 @@ export class SyncManager {
 
   async start(): Promise<boolean> {
     this.wsClient.on("sync_result", (msg) => this.handleSyncResult(msg));
-    this.wsClient.on("file_create_result", (msg) => this.handleFileCreateResult(msg));
-    this.wsClient.on("file_update_result", (msg) => this.handleFileUpdateResult(msg));
-    this.wsClient.on("file_delete_result", (msg) => this.handleFileDeleteResult(msg));
+    this.wsClient.on("filePutResult", (msg) => this.handleFilePutResult(msg));
+    this.wsClient.on("fileDeleteResult", (msg) => this.handleFileDeleteResult(msg));
     this.wsClient.on("file_check_result", (msg) => this.handleFileCheckResult(msg));
     this.wsClient.on("conflict_resolve_result", (msg) => this.handleConflictResolveResult(msg));
     this.wsClient.on("reconnected", () => this.performSyncInit());
@@ -113,13 +112,14 @@ export class SyncManager {
         const meta = this.fileMeta.get(path);
         return {
           path,
-          prevServerVersion: meta?.prevServerVersion,
-          prevServerHash: meta?.prevServerHash,
-          currentClientHash: hash,
+          exists: true,
+          baseVersion: meta?.prevServerVersion,
+          baseHash: meta?.prevServerHash,
+          localHash: hash,
         };
       }),
     );
-    const validFiles = files.filter((f): f is NonNullable<typeof f> => f !== null);
+    const validFiles = files.filter((f): f is FilePayload => f !== null);
     this.wsClient.sendSyncInit(this.vaultName, validFiles);
   }
 
@@ -129,7 +129,12 @@ export class SyncManager {
     if (change.type === "delete") {
       const meta = this.fileMeta.get(change.path);
       if (meta) {
-        this.wsClient.sendFileDelete(this.vaultName, change.path, meta.prevServerVersion);
+        this.wsClient.sendFileDelete(this.vaultName, {
+          path: change.path,
+          exists: false,
+          baseVersion: meta.prevServerVersion,
+          baseHash: meta.prevServerHash,
+        });
       }
       return;
     }
@@ -141,16 +146,30 @@ export class SyncManager {
     const encoding = isBinaryPath(change.path) ? "base64" : undefined;
 
     if (change.type === "create") {
-      this.wsClient.sendFileCreate(this.vaultName, change.path, content, hash, encoding);
+      this.wsClient.sendFilePut(this.vaultName, change.path, content, {
+        path: change.path,
+        exists: true,
+        localHash: hash,
+      }, encoding);
     } else {
       const meta = this.fileMeta.get(change.path);
       if (meta && meta.prevServerHash === hash) {
         return;
       }
       if (meta) {
-        this.wsClient.sendFileUpdate(this.vaultName, change.path, content, meta.prevServerVersion, hash, encoding);
+        this.wsClient.sendFilePut(this.vaultName, change.path, content, {
+          path: change.path,
+          exists: true,
+          baseVersion: meta.prevServerVersion,
+          baseHash: meta.prevServerHash,
+          localHash: hash,
+        }, encoding);
       } else {
-        this.wsClient.sendFileCreate(this.vaultName, change.path, content, hash, encoding);
+        this.wsClient.sendFilePut(this.vaultName, change.path, content, {
+          path: change.path,
+          exists: true,
+          localHash: hash,
+        }, encoding);
       }
     }
   }
@@ -164,31 +183,36 @@ export class SyncManager {
         }
       }
 
-      if (msg.toDelete) {
-        for (const path of msg.toDelete) {
-          await this.deleteLocalFile(path);
-          this.fileMeta.remove(path);
+      if (msg.toDeleteLocal) {
+        for (const entry of msg.toDeleteLocal) {
+          if (!entry.path) continue;
+          await this.deleteLocalFile(entry.path);
+          this.fileMeta.set(entry.path, {
+            prevServerVersion: entry.serverVersion,
+            prevServerHash: entry.serverHash || "",
+          });
         }
       }
 
       if (msg.toUpdateMeta) {
         for (const entry of msg.toUpdateMeta) {
+          if (!entry.path) continue;
           this.fileMeta.set(entry.path, {
-            prevServerVersion: entry.currentServerVersion,
-            prevServerHash: entry.currentServerHash,
+            prevServerVersion: entry.serverVersion,
+            prevServerHash: entry.serverHash || "",
           });
         }
       }
 
-      if (msg.toUpload) {
-        for (const path of msg.toUpload) {
-          await this.uploadFile(path);
+      if (msg.toRemoveMeta) {
+        for (const entry of msg.toRemoveMeta) {
+          if (entry.path) this.fileMeta.remove(entry.path);
         }
       }
 
-      if (msg.toUpdate) {
-        for (const path of msg.toUpdate) {
-          await this.updateFile(path);
+      if (msg.toPut) {
+        for (const path of msg.toPut) {
+          await this.uploadFile(path);
         }
       }
 
@@ -203,54 +227,37 @@ export class SyncManager {
     }
   }
 
-  private async handleFileCreateResult(msg: ServerMessage) {
+  private async handleFilePutResult(msg: ServerMessage) {
     if (!msg.path) return;
-    if (msg.ok && msg.currentServerVersion !== undefined && msg.currentServerHash) {
+    if (msg.action === "okUpdateMeta" && msg.meta) {
       this.fileMeta.set(msg.path, {
-        prevServerVersion: msg.currentServerVersion,
-        prevServerHash: msg.currentServerHash,
+        prevServerVersion: msg.meta.serverVersion,
+        prevServerHash: msg.meta.serverHash || "",
       });
-    } else if (!msg.ok && msg.conflict) {
-      const clientContent = await this.readFileContent(msg.path) || "";
-      const clientHash = await this.computeHashFromContent(msg.path, clientContent);
-      const entry: ConflictEntry = {
-        path: msg.path,
-        currentClientContent: clientContent,
-        currentClientHash: clientHash,
-        currentServerVersion: msg.conflict.currentServerVersion,
-        currentServerHash: msg.conflict.currentServerHash,
-        currentServerContent: msg.conflict.currentServerContent,
-        encoding: msg.conflict.encoding,
-        kind: "modify",
-        conflictPath: makeConflictPath(msg.path),
-      };
-      this.conflictQueue.add(entry);
-      this.openConflictModal();
-    }
-  }
-
-  private async handleFileUpdateResult(msg: ServerMessage) {
-    if (!msg.path) return;
-    if (msg.ok) {
-      if (msg.currentServerVersion !== undefined && msg.currentServerHash) {
-        this.fileMeta.set(msg.path, {
-          prevServerVersion: msg.currentServerVersion,
-          prevServerHash: msg.currentServerHash,
-        });
+    } else if (msg.action === "toDeleteLocal" && msg.meta) {
+      this.syncing = true;
+      try {
+        await this.deleteLocalFile(msg.path);
+      } finally {
+        this.syncing = false;
       }
-    } else if (msg.conflict) {
+      this.fileMeta.set(msg.path, {
+        prevServerVersion: msg.meta.serverVersion,
+        prevServerHash: msg.meta.serverHash || "",
+      });
+    } else if ((msg.action === "conflict" || msg.action === "deleteConflict") && msg.conflict) {
       const clientContent = await this.readFileContent(msg.path) || "";
       const clientHash = await this.computeHashFromContent(msg.path, clientContent);
       const entry: ConflictEntry = {
         path: msg.path,
-        prevServerVersion: msg.conflict.currentServerVersion,
+        prevServerVersion: msg.conflict.serverVersion,
         currentClientContent: clientContent,
         currentClientHash: clientHash,
-        currentServerVersion: msg.conflict.currentServerVersion,
-        currentServerHash: msg.conflict.currentServerHash,
-        currentServerContent: msg.conflict.currentServerContent,
+        currentServerVersion: msg.conflict.serverVersion,
+        currentServerHash: msg.conflict.serverHash,
+        currentServerContent: msg.conflict.serverContent,
         encoding: msg.conflict.encoding,
-        kind: "modify",
+        kind: msg.action === "deleteConflict" ? "delete" : "modify",
         conflictPath: makeConflictPath(msg.path),
       };
       this.conflictQueue.add(entry);
@@ -260,17 +267,22 @@ export class SyncManager {
 
   private async handleFileDeleteResult(msg: ServerMessage) {
     if (!msg.path) return;
-    if (msg.ok) {
+    if (msg.action === "okRemoveMeta") {
       this.fileMeta.remove(msg.path);
-    } else if (msg.conflict) {
+    } else if (msg.action === "okUpdateMeta" && msg.meta) {
+      this.fileMeta.set(msg.path, {
+        prevServerVersion: msg.meta.serverVersion,
+        prevServerHash: msg.meta.serverHash || "",
+      });
+    } else if (msg.action === "deleteConflict" && msg.conflict) {
       const entry: ConflictEntry = {
         path: msg.path,
-        prevServerVersion: msg.conflict.currentServerVersion,
+        prevServerVersion: msg.conflict.serverVersion,
         currentClientContent: "",
         currentClientHash: "",
-        currentServerVersion: msg.conflict.currentServerVersion,
-        currentServerHash: msg.conflict.currentServerHash,
-        currentServerContent: msg.conflict.currentServerContent,
+        currentServerVersion: msg.conflict.serverVersion,
+        currentServerHash: msg.conflict.serverHash,
+        currentServerContent: msg.conflict.serverContent,
         encoding: msg.conflict.encoding,
         kind: "delete",
       };
@@ -282,28 +294,38 @@ export class SyncManager {
   private async handleFileCheckResult(msg: ServerMessage) {
     if (!msg.path) return;
     switch (msg.action) {
-      case "up-to-date":
-        break;
-      case "update-meta":
-        if (msg.currentServerVersion !== undefined && msg.currentServerHash) {
+      case "upToDate":
+        if (msg.meta) {
           this.fileMeta.set(msg.path, {
-            prevServerVersion: msg.currentServerVersion,
-            prevServerHash: msg.currentServerHash,
+            prevServerVersion: msg.meta.serverVersion,
+            prevServerHash: msg.meta.serverHash || "",
           });
         }
         break;
-      case "download":
-        if (msg.content && msg.currentServerVersion !== undefined && msg.currentServerHash) {
+      case "updateMeta":
+        if (msg.meta) {
+          this.fileMeta.set(msg.path, {
+            prevServerVersion: msg.meta.serverVersion,
+            prevServerHash: msg.meta.serverHash || "",
+          });
+        }
+        break;
+      case "toDownload":
+        if (msg.content && msg.meta) {
           await this.applyDownloadEntry({
             path: msg.path,
             content: msg.content,
-            currentServerVersion: msg.currentServerVersion,
-            currentServerHash: msg.currentServerHash,
+            serverVersion: msg.meta.serverVersion,
+            serverHash: msg.meta.serverHash || "",
             encoding: msg.encoding,
           });
         }
         break;
+      case "put":
+        await this.uploadFile(msg.path);
+        break;
       case "conflict":
+      case "deleteConflict":
         if (msg.conflict) {
           const clientContent = await this.readFileContent(msg.path) || "";
           const clientHash = await this.computeHashFromContent(msg.path, clientContent);
@@ -311,19 +333,32 @@ export class SyncManager {
             path: msg.path,
             currentClientContent: clientContent,
             currentClientHash: clientHash,
-            currentServerVersion: msg.conflict.currentServerVersion,
-            currentServerHash: msg.conflict.currentServerHash,
-            currentServerContent: msg.conflict.currentServerContent,
+            currentServerVersion: msg.conflict.serverVersion,
+            currentServerHash: msg.conflict.serverHash,
+            currentServerContent: msg.conflict.serverContent,
             encoding: msg.conflict.encoding,
-            kind: "modify",
+            kind: msg.action === "deleteConflict" ? "delete" : "modify",
             conflictPath: makeConflictPath(msg.path),
           };
           this.conflictQueue.add(entry);
           this.openConflictModal();
         }
         break;
-      case "deleted":
-        await this.deleteLocalFile(msg.path);
+      case "toDeleteLocal":
+        this.syncing = true;
+        try {
+          await this.deleteLocalFile(msg.path);
+        } finally {
+          this.syncing = false;
+        }
+        if (msg.meta) {
+          this.fileMeta.set(msg.path, {
+            prevServerVersion: msg.meta.serverVersion,
+            prevServerHash: msg.meta.serverHash || "",
+          });
+        }
+        break;
+      case "toRemoveMeta":
         this.fileMeta.remove(msg.path);
         break;
     }
@@ -335,10 +370,10 @@ export class SyncManager {
       const existing = this.conflictQueue.get(msg.path);
       if (existing?.kind === "delete") {
         this.fileMeta.remove(msg.path);
-      } else if (msg.currentServerVersion !== undefined && msg.currentServerHash) {
+      } else if (msg.meta) {
         this.fileMeta.set(msg.path, {
-          prevServerVersion: msg.currentServerVersion,
-          prevServerHash: msg.currentServerHash,
+          prevServerVersion: msg.meta.serverVersion,
+          prevServerHash: msg.meta.serverHash || "",
         });
       }
       this.conflictQueue.remove(msg.path);
@@ -351,10 +386,10 @@ export class SyncManager {
     } else if (msg.conflict) {
       const existing = this.conflictQueue.get(msg.path);
       if (existing) {
-        existing.currentServerVersion = msg.conflict.currentServerVersion;
-        existing.currentServerHash = msg.conflict.currentServerHash;
-        existing.currentServerContent = msg.conflict.currentServerContent;
-        existing.prevServerVersion = msg.conflict.currentServerVersion;
+        existing.currentServerVersion = msg.conflict.serverVersion;
+        existing.currentServerHash = msg.conflict.serverHash;
+        existing.currentServerContent = msg.conflict.serverContent;
+        existing.prevServerVersion = msg.conflict.serverVersion;
         existing.selection = undefined;
         new Notice("[obsidian-goat-sync] 서버에 더 최신 변경이 있습니다: " + msg.path);
         this.conflictModal?.refreshIfOpen(msg.path);
@@ -416,7 +451,11 @@ export class SyncManager {
     await this.writeFileContent(conflictPath, entry.currentClientContent, entry.encoding);
     const hash = await this.computeHashFromContent(conflictPath, entry.currentClientContent);
     const encoding = isBinaryPath(conflictPath) ? "base64" : undefined;
-    this.wsClient.sendFileCreate(this.vaultName, conflictPath, entry.currentClientContent, hash, encoding);
+    this.wsClient.sendFilePut(this.vaultName, conflictPath, entry.currentClientContent, {
+      path: conflictPath,
+      exists: true,
+      localHash: hash,
+    }, encoding);
 
     await this.writeFileContent(entry.path, entry.currentServerContent, entry.encoding);
     this.fileMeta.set(entry.path, {
@@ -429,14 +468,14 @@ export class SyncManager {
     const clientContent = await this.readFileContent(c.path) || "";
     const entry: ConflictEntry = {
       path: c.path,
-      prevServerVersion: c.prevServerVersion,
+      prevServerVersion: c.baseVersion,
       currentClientContent: clientContent,
-      currentClientHash: c.currentClientHash,
-      currentServerVersion: c.currentServerVersion,
-      currentServerHash: c.currentServerHash,
-      currentServerContent: c.currentServerContent,
+      currentClientHash: c.localHash,
+      currentServerVersion: c.serverVersion,
+      currentServerHash: c.serverHash,
+      currentServerContent: c.serverContent,
       encoding: c.encoding,
-      kind: "modify",
+      kind: c.isDeleted ? "delete" : "modify",
       conflictPath: makeConflictPath(c.path),
     };
     this.conflictQueue.add(entry);
@@ -455,7 +494,11 @@ export class SyncManager {
     if (content === null) return;
     const hash = await this.computeHashFromContent(path, content);
     const encoding = isBinaryPath(path) ? "base64" : undefined;
-    this.wsClient.sendFileCreate(this.vaultName, path, content, hash, encoding);
+    this.wsClient.sendFilePut(this.vaultName, path, content, {
+      path,
+      exists: true,
+      localHash: hash,
+    }, encoding);
   }
 
   private async updateFile(path: string) {
@@ -465,18 +508,28 @@ export class SyncManager {
     const meta = this.fileMeta.get(path);
     if (!meta) {
       const encoding = isBinaryPath(path) ? "base64" : undefined;
-      this.wsClient.sendFileCreate(this.vaultName, path, content, hash, encoding);
+      this.wsClient.sendFilePut(this.vaultName, path, content, {
+        path,
+        exists: true,
+        localHash: hash,
+      }, encoding);
       return;
     }
     const encoding = isBinaryPath(path) ? "base64" : undefined;
-    this.wsClient.sendFileUpdate(this.vaultName, path, content, meta.prevServerVersion, hash, encoding);
+    this.wsClient.sendFilePut(this.vaultName, path, content, {
+      path,
+      exists: true,
+      baseVersion: meta.prevServerVersion,
+      baseHash: meta.prevServerHash,
+      localHash: hash,
+    }, encoding);
   }
 
   private async applyDownloadEntry(entry: DownloadEntry) {
     await this.writeFileContent(entry.path, entry.content, entry.encoding);
     this.fileMeta.set(entry.path, {
-      prevServerVersion: entry.currentServerVersion,
-      prevServerHash: entry.currentServerHash,
+      prevServerVersion: entry.serverVersion,
+      prevServerHash: entry.serverHash,
     });
   }
 
@@ -537,9 +590,10 @@ export class SyncManager {
       const meta = this.fileMeta.get(path);
       this.wsClient.sendFileCheck(this.vaultName, {
         path,
-        prevServerVersion: meta?.prevServerVersion,
-        prevServerHash: meta?.prevServerHash,
-        currentClientHash: hash,
+        exists: true,
+        baseVersion: meta?.prevServerVersion,
+        baseHash: meta?.prevServerHash,
+        localHash: hash,
       });
     });
   }

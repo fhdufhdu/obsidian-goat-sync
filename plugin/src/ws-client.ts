@@ -74,14 +74,6 @@ export interface ServerMessage {
   conflicts?: SyncConflictEntry[];
   meta?: ServerMetaPayload;
   error?: string;
-
-  // backward-compatible aliases from previous protocol versions
-  currentServerVersion?: number;
-  currentServerHash?: string;
-  currentServerContent?: string;
-  toUpload?: string[];
-  toUpdate?: string[];
-  toDelete?: string[];
 }
 
 export type MessageCallback = (msg: ServerMessage) => void;

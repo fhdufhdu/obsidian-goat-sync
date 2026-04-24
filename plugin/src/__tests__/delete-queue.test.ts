@@ -57,7 +57,7 @@ describe("DeleteQueue", () => {
     await q.load();
     await q.enqueue({ path: "a.md", baseVersion: 10, serverHash: "H10" });
 
-    expect(adapter.files.has("delete-queue.tmp")).toBe(false);
+    expect(adapter.files.has("delete-queue.json.tmp")).toBe(false);
     expect(JSON.parse(adapter.files.get("delete-queue.json") || "[]")).toHaveLength(1);
   });
 });

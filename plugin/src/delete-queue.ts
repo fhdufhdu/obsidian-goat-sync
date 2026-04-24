@@ -22,7 +22,7 @@ export class DeleteQueue {
   private tempPath: string;
 
   constructor(private adapter: QueueFileAdapter, private queuePath: string) {
-    this.tempPath = queuePath.replace(/\.json$/, ".tmp");
+    this.tempPath = `${queuePath}.tmp`;
   }
 
   async load(): Promise<void> {

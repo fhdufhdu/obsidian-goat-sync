@@ -7,8 +7,8 @@ export class AsyncMutex {
       release = resolve;
     });
     const previous = this.current;
-    this.current = previous.then(() => next);
-    await previous;
+    this.current = previous.catch(() => undefined).then(() => next);
+    await previous.catch(() => undefined);
     try {
       return await fn();
     } finally {

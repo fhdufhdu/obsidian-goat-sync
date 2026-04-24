@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AsyncMutex } from "../async-mutex";
 import { DirtyQueue } from "../dirty-queue";
 
 describe("DirtyQueue", () => {
@@ -53,5 +54,16 @@ describe("DirtyQueue", () => {
       lastSeenHash: "H2",
       status: "pending",
     });
+  });
+});
+
+describe("AsyncMutex", () => {
+  it("continues running queued work after a rejected callback", async () => {
+    const mutex = new AsyncMutex();
+    await expect(mutex.runExclusive(async () => {
+      throw new Error("boom");
+    })).rejects.toThrow("boom");
+
+    await expect(mutex.runExclusive(() => "ok")).resolves.toBe("ok");
   });
 });

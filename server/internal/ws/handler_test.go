@@ -923,8 +923,8 @@ func TestHandleConflictResolve_LocalUpdate_Success(t *testing.T) {
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Type != "conflict_resolve_result" {
-		t.Fatalf("expected conflict_resolve_result, got %s", resp.Type)
+	if resp.Type != "conflictResolveResult" {
+		t.Fatalf("expected conflictResolveResult, got %s", resp.Type)
 	}
 	if resp.Ok == nil || !*resp.Ok {
 		t.Fatal("expected ok=true")
@@ -984,8 +984,8 @@ func TestHandleConflictResolve_LocalDelete_Success(t *testing.T) {
 	}))
 
 	resp := readResponse(t, c)
-	if resp.Type != "conflict_resolve_result" {
-		t.Fatalf("expected conflict_resolve_result, got %s", resp.Type)
+	if resp.Type != "conflictResolveResult" {
+		t.Fatalf("expected conflictResolveResult, got %s", resp.Type)
 	}
 	if resp.Ok == nil || !*resp.Ok {
 		t.Fatal("expected ok=true for force delete")

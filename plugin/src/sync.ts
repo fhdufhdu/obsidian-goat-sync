@@ -98,15 +98,12 @@ export class SyncManager {
 
   async start(): Promise<boolean> {
     this.wsClient.on("syncResult", (msg) => this.handleSyncResult(msg));
-    this.wsClient.on("sync_result", (msg) => this.handleSyncResult(msg));
 
     this.wsClient.on("fileCheckResult", (msg) => this.handleFileCheckResult(msg));
-    this.wsClient.on("file_check_result", (msg) => this.handleFileCheckResult(msg));
 
     this.wsClient.on("filePutResult", (msg) => this.handleFilePutResult(msg));
     this.wsClient.on("fileDeleteResult", (msg) => this.handleFileDeleteResult(msg));
     this.wsClient.on("conflictResolveResult", (msg) => this.handleConflictResolveResult(msg));
-    this.wsClient.on("conflict_resolve_result", (msg) => this.handleConflictResolveResult(msg));
     this.wsClient.on("reconnected", () => {
       this.orchestrator.runStartupSync().catch((err) => {
         console.error("[obsidian-goat-sync] Reconnected sync failed:", err);

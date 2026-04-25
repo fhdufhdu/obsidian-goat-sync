@@ -120,7 +120,7 @@ func (h *Handler) handleSyncInit(client *Client, msg IncomingMessage) {
 		}
 	}
 	client.SendMessage(OutgoingMessage{
-		Type:          "sync_result",
+		Type:          "syncResult",
 		Vault:         msg.Vault,
 		ToDownload:    toDownload,
 		ToUpdateMeta:  toUpdateMeta,
@@ -133,19 +133,19 @@ func (h *Handler) handleSyncInit(client *Client, msg IncomingMessage) {
 
 func (h *Handler) handleFileCheck(client *Client, msg IncomingMessage) {
 	if msg.File == nil {
-		client.SendMessage(OutgoingMessage{Type: "file_check_result", Path: msg.Path, Error: "missing file payload"})
+		client.SendMessage(OutgoingMessage{Type: "fileCheckResult", Path: msg.Path, Error: "missing file payload"})
 		return
 	}
 
 	input, sf, _, err := h.decisionInputForPath(msg, *msg.File, syncpkg.MessageFileCheck)
 	if err != nil {
-		client.SendMessage(OutgoingMessage{Type: "file_check_result", Path: msg.Path, Error: err.Error()})
+		client.SendMessage(OutgoingMessage{Type: "fileCheckResult", Path: msg.Path, Error: err.Error()})
 		return
 	}
 	result := syncpkg.DecideFileCheck(input)
 
 	resp := OutgoingMessage{
-		Type: "file_check_result",
+		Type: "fileCheckResult",
 		Path: msg.Path,
 	}
 
@@ -167,7 +167,7 @@ func (h *Handler) handleFileCheck(client *Client, msg IncomingMessage) {
 	case syncpkg.MatrixActionToDownload:
 		entry, ok := h.makeDownloadEntry(msg.Vault, sf)
 		if !ok {
-			client.SendMessage(OutgoingMessage{Type: "file_check_result", Path: msg.Path, Error: "failed to read server file"})
+			client.SendMessage(OutgoingMessage{Type: "fileCheckResult", Path: msg.Path, Error: "failed to read server file"})
 			return
 		}
 		resp.Action = string(syncpkg.MatrixActionToDownload)
@@ -189,7 +189,7 @@ func (h *Handler) handleFileCheck(client *Client, msg IncomingMessage) {
 	case syncpkg.MatrixActionConflict, syncpkg.MatrixActionDeleteConflict:
 		content, rerr := h.storage.ReadFile(msg.Vault, msg.Path)
 		if rerr != nil {
-			client.SendMessage(OutgoingMessage{Type: "file_check_result", Path: msg.Path, Action: string(result.Action), Error: rerr.Error()})
+			client.SendMessage(OutgoingMessage{Type: "fileCheckResult", Path: msg.Path, Action: string(result.Action), Error: rerr.Error()})
 			return
 		}
 		enc, encoded := encodeContent(content)
@@ -411,13 +411,13 @@ func (h *Handler) handleConflictResolveUpdate(client *Client, msg IncomingMessag
 	serverExists := err == nil && err != sql.ErrNoRows
 
 	if err != nil && err != sql.ErrNoRows {
-		client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
+		client.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
 		return
 	}
 
-	baseVersion, _, currentClientHash, err := protocolPayloadValues(msg, true, true)
+	baseVersion, _, localHash, err := protocolPayloadValues(msg, true, true)
 	if err != nil {
-		client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
+		client.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
 		return
 	}
 
@@ -426,21 +426,21 @@ func (h *Handler) handleConflictResolveUpdate(client *Client, msg IncomingMessag
 		prevVersion = *baseVersion
 	}
 
-	optResult := syncpkg.CheckFileUpdate(sf, serverExists, prevVersion, currentClientHash)
+	optResult := syncpkg.CheckFileUpdate(sf, serverExists, prevVersion, localHash)
 
 	if !optResult.OK {
 		if optResult.ErrNoRows {
-			client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: "file not found"})
+			client.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: "file not found"})
 			return
 		}
 		content, rerr := h.storage.ReadFile(msg.Vault, msg.Path)
 		if rerr != nil {
-			client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: rerr.Error()})
+			client.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: rerr.Error()})
 			return
 		}
 		enc, encoded := encodeContent(content)
 		client.SendMessage(OutgoingMessage{
-			Type: "conflict_resolve_result",
+			Type: "conflictResolveResult",
 			Path: msg.Path,
 			Ok:   boolPtr(false),
 			Conflict: &ConflictInfo{
@@ -456,7 +456,7 @@ func (h *Handler) handleConflictResolveUpdate(client *Client, msg IncomingMessag
 
 	if optResult.Noop {
 		client.SendMessage(OutgoingMessage{
-			Type: "conflict_resolve_result",
+			Type: "conflictResolveResult",
 			Path: msg.Path,
 			Ok:   boolPtr(true),
 			Meta: &ServerMetaPayload{
@@ -471,18 +471,18 @@ func (h *Handler) handleConflictResolveUpdate(client *Client, msg IncomingMessag
 
 	fileContent := decodeContent(msg.Content, msg.Encoding)
 	if werr := h.storage.WriteFile(msg.Vault, msg.Path, fileContent); werr != nil {
-		client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: werr.Error()})
+		client.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: werr.Error()})
 		return
 	}
 
-	newFile, uerr := h.queries.UpdateFile(msg.Vault, msg.Path, currentClientHash)
+	newFile, uerr := h.queries.UpdateFile(msg.Vault, msg.Path, localHash)
 	if uerr != nil {
-		client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: uerr.Error()})
+		client.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: uerr.Error()})
 		return
 	}
 
 	client.SendMessage(OutgoingMessage{
-		Type: "conflict_resolve_result",
+		Type: "conflictResolveResult",
 		Path: msg.Path,
 		Ok:   boolPtr(true),
 		Meta: &ServerMetaPayload{
@@ -497,13 +497,13 @@ func (h *Handler) handleConflictResolveUpdate(client *Client, msg IncomingMessag
 func (h *Handler) handleConflictResolveDelete(client *Client, msg IncomingMessage) {
 	sf, fileErr := h.queries.GetFile(msg.Vault, msg.Path)
 	if fileErr != nil && fileErr != sql.ErrNoRows {
-		client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: fileErr.Error()})
+		client.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: fileErr.Error()})
 		return
 	}
 
 	baseVersion, _, _, err := protocolPayloadValues(msg, true, false)
 	if err != nil {
-		client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
+		client.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
 		return
 	}
 
@@ -516,7 +516,7 @@ func (h *Handler) handleConflictResolveDelete(client *Client, msg IncomingMessag
 
 	if optResult.Noop {
 		client.SendMessage(OutgoingMessage{
-			Type: "conflict_resolve_result",
+			Type: "conflictResolveResult",
 			Path: msg.Path,
 			Ok:   boolPtr(true),
 		})
@@ -526,12 +526,12 @@ func (h *Handler) handleConflictResolveDelete(client *Client, msg IncomingMessag
 	if !optResult.OK {
 		content, rerr := h.storage.ReadFile(msg.Vault, msg.Path)
 		if rerr != nil {
-			client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: rerr.Error()})
+			client.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: rerr.Error()})
 			return
 		}
 		enc, encoded := encodeContent(content)
 		client.SendMessage(OutgoingMessage{
-			Type: "conflict_resolve_result",
+			Type: "conflictResolveResult",
 			Path: msg.Path,
 			Ok:   boolPtr(false),
 			Conflict: &ConflictInfo{
@@ -548,12 +548,12 @@ func (h *Handler) handleConflictResolveDelete(client *Client, msg IncomingMessag
 	h.storage.DeleteFile(msg.Vault, msg.Path)
 	newFile, derr := h.queries.DeleteFile(msg.Vault, msg.Path)
 	if derr != nil {
-		client.SendMessage(OutgoingMessage{Type: "conflict_resolve_result", Path: msg.Path, Ok: boolPtr(false), Error: derr.Error()})
+		client.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: derr.Error()})
 		return
 	}
 
 	client.SendMessage(OutgoingMessage{
-		Type: "conflict_resolve_result",
+		Type: "conflictResolveResult",
 		Path: msg.Path,
 		Ok:   boolPtr(true),
 		Meta: &ServerMetaPayload{

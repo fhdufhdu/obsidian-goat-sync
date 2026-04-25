@@ -97,10 +97,15 @@ export class SyncManager {
   }
 
   async start(): Promise<boolean> {
+    this.wsClient.on("syncResult", (msg) => this.handleSyncResult(msg));
     this.wsClient.on("sync_result", (msg) => this.handleSyncResult(msg));
+
+    this.wsClient.on("fileCheckResult", (msg) => this.handleFileCheckResult(msg));
+    this.wsClient.on("file_check_result", (msg) => this.handleFileCheckResult(msg));
+
     this.wsClient.on("filePutResult", (msg) => this.handleFilePutResult(msg));
     this.wsClient.on("fileDeleteResult", (msg) => this.handleFileDeleteResult(msg));
-    this.wsClient.on("file_check_result", (msg) => this.handleFileCheckResult(msg));
+    this.wsClient.on("conflictResolveResult", (msg) => this.handleConflictResolveResult(msg));
     this.wsClient.on("conflict_resolve_result", (msg) => this.handleConflictResolveResult(msg));
     this.wsClient.on("reconnected", () => {
       this.orchestrator.runStartupSync().catch((err) => {
@@ -291,10 +296,10 @@ export class SyncManager {
   }
 
   private async handleFileCheckResult(msg: ServerMessage) {
-    if (!msg.path) return;
+    if (!msg.path || !msg.action) return;
     switch (msg.action) {
       case "upToDate":
-        if (msg.meta) {
+        if (msg.meta?.serverVersion !== undefined) {
           this.fileMeta.set(msg.path, {
             prevServerVersion: msg.meta.serverVersion,
             prevServerHash: msg.meta.serverHash || "",
@@ -302,7 +307,7 @@ export class SyncManager {
         }
         break;
       case "updateMeta":
-        if (msg.meta) {
+        if (msg.meta?.serverVersion !== undefined) {
           this.fileMeta.set(msg.path, {
             prevServerVersion: msg.meta.serverVersion,
             prevServerHash: msg.meta.serverHash || "",
@@ -321,7 +326,12 @@ export class SyncManager {
         }
         break;
       case "put":
-        await this.updateFile(msg.path);
+        const dirtyEntry = this.dirtyQueue.get(msg.path);
+        if (dirtyEntry) {
+          await this.putDirtyFile(dirtyEntry);
+        } else {
+          await this.updateFile(msg.path);
+        }
         break;
       case "conflict":
       case "deleteConflict":

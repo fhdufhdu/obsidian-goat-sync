@@ -12,6 +12,7 @@ export interface SyncOrchestratorHandlers {
 export class SyncOrchestrator {
   private mutex = new AsyncMutex();
   private running = false;
+  private rerunRequested = false;
 
   constructor(private handlers: SyncOrchestratorHandlers) {}
 
@@ -34,10 +35,17 @@ export class SyncOrchestrator {
   }
 
   async runIntervalWorker(): Promise<void> {
-    if (this.running) return;
+    if (this.running) {
+      this.rerunRequested = true;
+      return;
+    }
+
     this.running = true;
     try {
-      await this.runStartupSync();
+      do {
+        this.rerunRequested = false;
+        await this.runStartupSync();
+      } while (this.rerunRequested);
     } finally {
       this.running = false;
     }

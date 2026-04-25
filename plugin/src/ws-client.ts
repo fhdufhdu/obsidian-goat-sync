@@ -184,26 +184,28 @@ export class WsClient {
     this.callbacks.get(type)!.push(callback);
   }
 
-  send(msg: Record<string, unknown>) {
+  send(msg: Record<string, unknown>): boolean {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
+      return true;
     }
+    return false;
   }
 
-  sendSyncInit(vault: string, files: FilePayload[]) {
-    this.send(buildSyncInitMessage(vault, files));
+  sendSyncInit(vault: string, files: FilePayload[]): boolean {
+    return this.send(buildSyncInitMessage(vault, files));
   }
 
-  sendFileCheck(vault: string, file: FilePayload) {
-    this.send({ type: "fileCheck", vault, path: file.path, file });
+  sendFileCheck(vault: string, file: FilePayload): boolean {
+    return this.send({ type: "fileCheck", vault, path: file.path, file });
   }
 
-  sendFilePut(vault: string, path: string, content: string, file: FilePayload, encoding?: string) {
-    this.send(buildFilePutMessage(vault, path, content, file, encoding));
+  sendFilePut(vault: string, path: string, content: string, file: FilePayload, encoding?: string): boolean {
+    return this.send(buildFilePutMessage(vault, path, content, file, encoding));
   }
 
-  sendFileDelete(vault: string, file: FilePayload) {
-    this.send({ type: "fileDelete", vault, path: file.path, file });
+  sendFileDelete(vault: string, file: FilePayload): boolean {
+    return this.send({ type: "fileDelete", vault, path: file.path, file });
   }
 
   sendConflictResolveLocal(
@@ -213,7 +215,7 @@ export class WsClient {
     localHash: string,
     baseVersion: number,
     encoding?: string,
-  ) {
+  ): boolean {
     const msg: Record<string, unknown> = {
       type: "conflictResolve",
       vault,
@@ -228,11 +230,11 @@ export class WsClient {
       content,
     };
     if (encoding) msg.encoding = encoding;
-    this.send(msg);
+    return this.send(msg);
   }
 
-  sendConflictResolveLocalDelete(vault: string, path: string, baseVersion: number) {
-    this.send({
+  sendConflictResolveLocalDelete(vault: string, path: string, baseVersion: number): boolean {
+    return this.send({
       type: "conflictResolve",
       vault,
       path,
@@ -246,7 +248,7 @@ export class WsClient {
     });
   }
 
-  sendVaultCreate(vault: string) {
-    this.send({ type: "vaultCreate", vault });
+  sendVaultCreate(vault: string): boolean {
+    return this.send({ type: "vaultCreate", vault });
   }
 }

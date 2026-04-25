@@ -15,6 +15,13 @@ type File struct {
 	UpdatedAt  string
 }
 
+func (f File) DeletedFromVersion() int64 {
+	if !f.IsDeleted {
+		return 0
+	}
+	return f.Version - 1
+}
+
 func (q *Queries) CreateFile(vaultName, path, hash string) (File, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := q.db.Exec(`

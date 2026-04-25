@@ -59,6 +59,8 @@ export default class ObsidianSyncPlugin extends Plugin {
       this.settings.fileMeta = data;
       await this.saveData(this.settings);
     });
+    const pluginDir = this.manifest.dir || ".obsidian/plugins/obsidian-goat-sync";
+    const deleteQueuePath = `${pluginDir}/delete-queue.json`;
 
     this.syncManager = new SyncManager(
       this.app,
@@ -67,6 +69,7 @@ export default class ObsidianSyncPlugin extends Plugin {
       token,
       vaultName,
       this.fileMetaStore,
+      deleteQueuePath,
     );
 
     const connected = await this.syncManager.start();

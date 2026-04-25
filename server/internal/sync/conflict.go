@@ -85,24 +85,24 @@ func CheckFileCreate(serverFile db.File, serverExists bool) OptimisticResult {
 	return OptimisticResult{OK: false}
 }
 
-func CheckFileUpdate(serverFile db.File, serverExists bool, prevServerVersion int64, currentClientHash string) OptimisticResult {
+func CheckFileUpdate(serverFile db.File, serverExists bool, baseVersion int64, localHash string) OptimisticResult {
 	if !serverExists || serverFile.IsDeleted {
 		return OptimisticResult{OK: false, ErrNoRows: true}
 	}
-	if prevServerVersion != serverFile.Version {
+	if baseVersion != serverFile.Version {
 		return OptimisticResult{OK: false}
 	}
-	if currentClientHash == serverFile.Hash {
+	if localHash == serverFile.Hash {
 		return OptimisticResult{OK: true, Noop: true}
 	}
 	return OptimisticResult{OK: true}
 }
 
-func CheckFileDelete(serverFile db.File, serverErr error, prevServerVersion int64) OptimisticResult {
+func CheckFileDelete(serverFile db.File, serverErr error, baseVersion int64) OptimisticResult {
 	if serverErr == sql.ErrNoRows || serverFile.IsDeleted {
 		return OptimisticResult{OK: true, Noop: true}
 	}
-	if prevServerVersion != serverFile.Version {
+	if baseVersion != serverFile.Version {
 		return OptimisticResult{OK: false}
 	}
 	return OptimisticResult{OK: true}

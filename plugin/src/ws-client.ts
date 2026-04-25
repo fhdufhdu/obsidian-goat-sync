@@ -1,38 +1,55 @@
-export interface SyncInitFileMsg {
+export interface FilePayload {
   path: string;
-  prevServerVersion?: number;
-  prevServerHash?: string;
-  currentClientHash: string;
+  exists: boolean;
+  baseVersion?: number;
+  baseHash?: string;
+  localHash?: string;
+}
+
+export interface ServerMetaPayload {
+  path?: string;
+  serverVersion: number;
+  serverHash?: string;
+  isDeleted: boolean;
 }
 
 export interface DownloadEntry {
   path: string;
   content: string;
-  currentServerVersion: number;
-  currentServerHash: string;
+  serverVersion: number;
+  serverHash: string;
   encoding?: string;
 }
 
+export type ServerAction =
+  | "toPut" | "toUpdateMeta" | "toDownload" | "toDeleteLocal" | "toRemoveMeta"
+  | "none" | "conflict" | "deleteConflict"
+  | "put" | "updateMeta" | "upToDate"
+  | "okUpdateMeta" | "okRemoveMeta";
+
 export interface UpdateMetaEntry {
   path: string;
-  currentServerVersion: number;
-  currentServerHash: string;
+  serverVersion: number;
+  serverHash: string;
 }
 
 export interface ConflictInfo {
-  currentServerVersion: number;
-  currentServerHash: string;
-  currentServerContent: string;
+  serverVersion: number;
+  serverHash: string;
+  serverContent: string;
+  isDeleted: boolean;
   encoding?: string;
 }
 
 export interface SyncConflictEntry {
   path: string;
-  prevServerVersion?: number;
-  currentClientHash: string;
-  currentServerVersion: number;
-  currentServerHash: string;
-  currentServerContent: string;
+  baseVersion?: number;
+  baseHash?: string;
+  localHash: string;
+  serverVersion: number;
+  serverHash: string;
+  serverContent: string;
+  isDeleted: boolean;
   encoding?: string;
 }
 
@@ -42,22 +59,34 @@ export interface ServerMessage {
   path?: string;
   ok?: boolean;
   noop?: boolean;
-  currentServerVersion?: number;
-  currentServerHash?: string;
-  action?: string;
+  serverVersion?: number;
+  serverHash?: string;
+  serverContent?: string;
+  action?: ServerAction;
   content?: string;
   encoding?: string;
   conflict?: ConflictInfo;
-  toUpload?: string[];
-  toUpdate?: string[];
+  toPut?: string[];
   toDownload?: DownloadEntry[];
-  toDelete?: string[];
-  toUpdateMeta?: UpdateMetaEntry[];
+  toUpdateMeta?: ServerMetaPayload[];
+  toDeleteLocal?: ServerMetaPayload[];
+  toRemoveMeta?: ServerMetaPayload[];
   conflicts?: SyncConflictEntry[];
+  meta?: ServerMetaPayload;
   error?: string;
 }
 
-type MessageCallback = (msg: ServerMessage) => void;
+export type MessageCallback = (msg: ServerMessage) => void;
+
+export function buildSyncInitMessage(vault: string, files: FilePayload[]) {
+  return { type: "syncInit", vault, files };
+}
+
+export function buildFilePutMessage(vault: string, path: string, content: string, file: FilePayload, encoding?: string) {
+  const msg: Record<string, unknown> = { type: "filePut", vault, path, content, file };
+  if (encoding) msg.encoding = encoding;
+  return msg;
+}
 
 export class WsClient {
   private ws: WebSocket | null = null;
@@ -155,90 +184,71 @@ export class WsClient {
     this.callbacks.get(type)!.push(callback);
   }
 
-  send(msg: Record<string, unknown>) {
+  send(msg: Record<string, unknown>): boolean {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
+      return true;
     }
+    return false;
   }
 
-  sendSyncInit(vault: string, files: SyncInitFileMsg[]) {
-    this.send({ type: "sync_init", vault, files });
+  sendSyncInit(vault: string, files: FilePayload[]): boolean {
+    return this.send(buildSyncInitMessage(vault, files));
   }
 
-  sendFileCheck(vault: string, file: SyncInitFileMsg) {
-    this.send({
-      type: "file_check",
-      vault,
-      path: file.path,
-      prevServerVersion: file.prevServerVersion,
-      prevServerHash: file.prevServerHash,
-      currentClientHash: file.currentClientHash,
-    });
+  sendFileCheck(vault: string, file: FilePayload): boolean {
+    return this.send({ type: "fileCheck", vault, path: file.path, file });
   }
 
-  sendFileCreate(vault: string, path: string, content: string, currentClientHash: string, encoding?: string) {
-    const msg: Record<string, unknown> = { type: "file_create", vault, path, content, currentClientHash };
-    if (encoding) msg.encoding = encoding;
-    this.send(msg);
+  sendFilePut(vault: string, path: string, content: string, file: FilePayload, encoding?: string): boolean {
+    return this.send(buildFilePutMessage(vault, path, content, file, encoding));
   }
 
-  sendFileUpdate(
-    vault: string,
-    path: string,
-    content: string,
-    prevServerVersion: number,
-    currentClientHash: string,
-    encoding?: string,
-  ) {
-    const msg: Record<string, unknown> = {
-      type: "file_update",
-      vault,
-      path,
-      content,
-      prevServerVersion,
-      currentClientHash,
-    };
-    if (encoding) msg.encoding = encoding;
-    this.send(msg);
-  }
-
-  sendFileDelete(vault: string, path: string, prevServerVersion: number) {
-    this.send({ type: "file_delete", vault, path, prevServerVersion });
+  sendFileDelete(vault: string, file: FilePayload): boolean {
+    return this.send({ type: "fileDelete", vault, path: file.path, file });
   }
 
   sendConflictResolveLocal(
     vault: string,
     path: string,
     content: string,
-    currentClientHash: string,
-    prevServerVersion: number,
+    localHash: string,
+    baseVersion: number,
     encoding?: string,
-  ) {
+  ): boolean {
     const msg: Record<string, unknown> = {
-      type: "conflict_resolve",
+      type: "conflictResolve",
       vault,
       path,
       resolution: "local",
+      file: {
+        path,
+        exists: true,
+        baseVersion,
+        localHash,
+      },
       content,
-      currentClientHash,
-      prevServerVersion,
     };
     if (encoding) msg.encoding = encoding;
-    this.send(msg);
+    return this.send(msg);
   }
 
-  sendConflictResolveLocalDelete(vault: string, path: string, prevServerVersion: number) {
-    this.send({
-      type: "conflict_resolve",
+  sendConflictResolveLocalDelete(vault: string, path: string, baseVersion: number): boolean {
+    return this.send({
+      type: "conflictResolve",
       vault,
       path,
       resolution: "local",
       action: "delete",
-      prevServerVersion,
+      file: {
+        path,
+        exists: true,
+        baseVersion,
+      },
     });
   }
 
-  sendVaultCreate(vault: string) {
-    this.send({ type: "vault_create", vault });
+  sendVaultCreate(vault: string): boolean {
+    return this.send({ type: "vaultCreate", vault });
   }
 }

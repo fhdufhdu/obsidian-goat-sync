@@ -1,8 +1,11 @@
 package ws
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"obsidian-goat-sync/internal/db"
@@ -1021,5 +1024,35 @@ func TestIncomingMessageUsesCamelCaseProtocol(t *testing.T) {
 	}
 	if decoded.File == nil || decoded.File.BaseVersion == nil || *decoded.File.BaseVersion != 7 {
 		t.Fatalf("missing baseVersion in file payload: %#v", decoded.File)
+	}
+}
+
+func TestMessageBoundaryLogsRawContent(t *testing.T) {
+	var buf bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	h := &Handler{}
+	h.HandleMessage(nil, mustJSON(IncomingMessage{
+		Type:    "unknownType",
+		Vault:   "personal",
+		Path:    "a.md",
+		Content: "secret body",
+	}))
+
+	c := &Client{send: make(chan []byte, 1)}
+	c.SendMessage(OutgoingMessage{
+		Type:    "fileCheckResult",
+		Path:    "a.md",
+		Content: "secret response",
+	})
+
+	logs := buf.String()
+	if !strings.Contains(logs, "ws incoming raw") || !strings.Contains(logs, "ws outgoing raw") {
+		t.Fatalf("expected incoming and outgoing log lines, got %q", logs)
+	}
+	if !strings.Contains(logs, "secret body") || !strings.Contains(logs, "secret response") {
+		t.Fatalf("logs did not include raw content: %q", logs)
 	}
 }

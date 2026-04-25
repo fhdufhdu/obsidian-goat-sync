@@ -27,6 +27,7 @@ func (h *Handler) HandleMessage(client *Client, data []byte) {
 		log.Printf("failed to parse message: %v", err)
 		return
 	}
+	log.Printf("ws incoming raw: %s", string(data))
 
 	switch msg.Type {
 	case "vaultCreate":

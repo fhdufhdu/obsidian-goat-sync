@@ -123,6 +123,7 @@ export class WsClient {
       };
 
       this.ws.onmessage = (event) => {
+        console.debug("[obsidian-goat-sync] ws incoming raw", event.data);
         const msg: ServerMessage = JSON.parse(event.data);
         const handlers = this.callbacks.get(msg.type) || [];
         handlers.forEach((cb) => cb(msg));
@@ -186,7 +187,9 @@ export class WsClient {
 
   send(msg: Record<string, unknown>): boolean {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(msg));
+      const data = JSON.stringify(msg);
+      console.debug("[obsidian-goat-sync] ws outgoing raw", data);
+      this.ws.send(data);
       return true;
     }
     return false;

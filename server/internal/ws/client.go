@@ -85,6 +85,7 @@ func (c *Client) SendMessage(msg OutgoingMessage) {
 		log.Printf("failed to marshal message: %v", err)
 		return
 	}
+	log.Printf("ws outgoing raw: %s", string(data))
 	select {
 	case c.send <- data:
 	default:

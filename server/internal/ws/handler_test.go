@@ -225,6 +225,46 @@ func TestHandleFileCreate_NoFilePayload(t *testing.T) {
 	}
 }
 
+func TestHandleFilePutCreatesMissingVault(t *testing.T) {
+	h, q, s, _ := setupHandler(t)
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:    "filePut",
+		Vault:   "personal",
+		Path:    "notes/new.md",
+		Content: "hello",
+		File: &FilePayload{
+			Path:      "notes/new.md",
+			Exists:    true,
+			LocalHash: "hash-new",
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if resp.Type != "filePutResult" || resp.Error != "" {
+		t.Fatalf("expected successful filePutResult, got %#v", resp)
+	}
+	if resp.Action != "okUpdateMeta" {
+		t.Fatalf("expected okUpdateMeta, got %s", resp.Action)
+	}
+	exists, err := q.VaultExists("personal")
+	if err != nil {
+		t.Fatalf("vault exists: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected vault to be auto-created")
+	}
+	content, err := s.ReadFile("personal", "notes/new.md")
+	if err != nil {
+		t.Fatalf("expected file content: %v", err)
+	}
+	if string(content) != "hello" {
+		t.Fatalf("content = %q", content)
+	}
+}
+
 func TestHandleSyncInit_NoPrev_ActiveSameHash(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")

@@ -120,6 +120,9 @@ func (s *Storage) objectPath(ref string) (string, error) {
 		return "", fmt.Errorf("invalid content ref %q", ref)
 	}
 	hash := strings.TrimPrefix(ref, prefix)
+	if _, err := hex.DecodeString(hash); err != nil {
+		return "", fmt.Errorf("invalid content ref %q", ref)
+	}
 	return filepath.Join(s.dataDir, "objects", "sha256", hash[:2], hash), nil
 }
 

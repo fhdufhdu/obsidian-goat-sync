@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -226,6 +227,37 @@ func TestStageObjectWriteIsIdempotent(t *testing.T) {
 	}
 	if err := op2.Commit(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReadObjectRejectsInvalidRefs(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+
+	tests := []struct {
+		name string
+		ref  string
+	}{
+		{
+			name: "separator in digest",
+			ref:  "sha256:" + strings.Repeat("a", 63) + "/",
+		},
+		{
+			name: "non-hex digest",
+			ref:  "sha256:" + strings.Repeat("g", 64),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := s.ReadObject(tt.ref)
+			if err == nil {
+				t.Fatal("expected invalid ref error")
+			}
+			if !strings.Contains(err.Error(), "invalid content ref") {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 

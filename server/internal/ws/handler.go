@@ -110,6 +110,20 @@ func (h *Handler) HandleMessage(client *Client, data []byte) {
 		return
 	}
 
+	for _, out := range recorder.messages {
+		if out.Error != "" {
+			for _, rollback := range rollbacks {
+				if rerr := rollback(); rerr != nil {
+					log.Printf("ws rollback failed: %v", rerr)
+				}
+			}
+			for _, out := range recorder.messages {
+				sender.SendMessage(out)
+			}
+			return
+		}
+	}
+
 	for _, finalize := range finalizers {
 		if ferr := finalize(); ferr != nil {
 			log.Printf("ws finalize failed: %v", ferr)
@@ -408,8 +422,6 @@ func (h *Handler) sendConflictResult(sender messageSender, messageType, vault, p
 }
 
 func (h *Handler) handleFilePut(sender messageSender, msg IncomingMessage, finalizers *[]func() error, rollbacks *[]func() error) {
-	_ = finalizers
-	_ = rollbacks
 	if msg.File == nil {
 		sender.SendMessage(OutgoingMessage{Type: "filePutResult", Path: msg.Path, Action: string(syncpkg.MatrixActionConflict), Error: "missing file payload"})
 		return
@@ -428,10 +440,13 @@ func (h *Handler) handleFilePut(sender messageSender, msg IncomingMessage, final
 	switch result.Action {
 	case syncpkg.MatrixActionOkUpdateMeta:
 		fileContent := decodeContent(msg.Content, msg.Encoding)
-		if err := h.storage.WriteFile(msg.Vault, path, fileContent); err != nil {
+		stage, err := h.storage.StageWrite(msg.Vault, path, fileContent)
+		if err != nil {
 			sender.SendMessage(OutgoingMessage{Type: "filePutResult", Path: path, Error: err.Error()})
 			return
 		}
+		*finalizers = append(*finalizers, stage.Commit)
+		*rollbacks = append(*rollbacks, stage.Rollback)
 
 		var newFile db.File
 		if !serverExists {
@@ -458,8 +473,6 @@ func (h *Handler) handleFilePut(sender messageSender, msg IncomingMessage, final
 }
 
 func (h *Handler) handleFileDelete(sender messageSender, msg IncomingMessage, finalizers *[]func() error, rollbacks *[]func() error) {
-	_ = finalizers
-	_ = rollbacks
 	if msg.File == nil {
 		sender.SendMessage(OutgoingMessage{Type: "fileDeleteResult", Path: msg.Path, Action: string(syncpkg.MatrixActionDeleteConflict), Error: "missing file payload"})
 		return
@@ -480,15 +493,19 @@ func (h *Handler) handleFileDelete(sender messageSender, msg IncomingMessage, fi
 	case syncpkg.MatrixActionOkUpdateMeta:
 		newFile := sf
 		if !sf.IsDeleted {
+			stage, err := h.storage.StageDelete(msg.Vault, path)
+			if err != nil {
+				sender.SendMessage(OutgoingMessage{Type: "fileDeleteResult", Path: path, Error: err.Error()})
+				return
+			}
+			*finalizers = append(*finalizers, stage.Commit)
+			*rollbacks = append(*rollbacks, stage.Rollback)
 			var dErr error
 			newFile, dErr = h.queries.DeleteFile(msg.Vault, path)
 			if dErr != nil {
 				sender.SendMessage(OutgoingMessage{Type: "fileDeleteResult", Path: path, Error: dErr.Error()})
 				return
 			}
-		}
-		if dErr := h.storage.DeleteFile(msg.Vault, path); dErr != nil {
-			log.Printf("storage delete error: %v", dErr)
 		}
 		sender.SendMessage(OutgoingMessage{
 			Type:   "fileDeleteResult",
@@ -513,16 +530,14 @@ func (h *Handler) handleFileDelete(sender messageSender, msg IncomingMessage, fi
 
 func (h *Handler) handleConflictResolve(sender messageSender, client *Client, msg IncomingMessage, finalizers *[]func() error, rollbacks *[]func() error) {
 	_ = client
-	_ = finalizers
-	_ = rollbacks
 	if msg.Resolution == "local" && msg.Action == "delete" {
-		h.handleConflictResolveDelete(sender, msg)
+		h.handleConflictResolveDelete(sender, msg, finalizers, rollbacks)
 		return
 	}
-	h.handleConflictResolveUpdate(sender, msg)
+	h.handleConflictResolveUpdate(sender, msg, finalizers, rollbacks)
 }
 
-func (h *Handler) handleConflictResolveUpdate(sender messageSender, msg IncomingMessage) {
+func (h *Handler) handleConflictResolveUpdate(sender messageSender, msg IncomingMessage, finalizers *[]func() error, rollbacks *[]func() error) {
 	sf, err := h.queries.GetFile(msg.Vault, msg.Path)
 	serverExists := err == nil && err != sql.ErrNoRows
 
@@ -586,10 +601,13 @@ func (h *Handler) handleConflictResolveUpdate(sender messageSender, msg Incoming
 	}
 
 	fileContent := decodeContent(msg.Content, msg.Encoding)
-	if werr := h.storage.WriteFile(msg.Vault, msg.Path, fileContent); werr != nil {
-		sender.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: werr.Error()})
+	stage, err := h.storage.StageWrite(msg.Vault, msg.Path, fileContent)
+	if err != nil {
+		sender.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
 		return
 	}
+	*finalizers = append(*finalizers, stage.Commit)
+	*rollbacks = append(*rollbacks, stage.Rollback)
 
 	newFile, uerr := h.queries.UpdateFile(msg.Vault, msg.Path, localHash)
 	if uerr != nil {
@@ -610,7 +628,7 @@ func (h *Handler) handleConflictResolveUpdate(sender messageSender, msg Incoming
 	})
 }
 
-func (h *Handler) handleConflictResolveDelete(sender messageSender, msg IncomingMessage) {
+func (h *Handler) handleConflictResolveDelete(sender messageSender, msg IncomingMessage, finalizers *[]func() error, rollbacks *[]func() error) {
 	sf, fileErr := h.queries.GetFile(msg.Vault, msg.Path)
 	if fileErr != nil && fileErr != sql.ErrNoRows {
 		sender.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: fileErr.Error()})
@@ -661,7 +679,14 @@ func (h *Handler) handleConflictResolveDelete(sender messageSender, msg Incoming
 		return
 	}
 
-	h.storage.DeleteFile(msg.Vault, msg.Path)
+	stage, err := h.storage.StageDelete(msg.Vault, msg.Path)
+	if err != nil {
+		sender.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
+		return
+	}
+	*finalizers = append(*finalizers, stage.Commit)
+	*rollbacks = append(*rollbacks, stage.Rollback)
+
 	newFile, derr := h.queries.DeleteFile(msg.Vault, msg.Path)
 	if derr != nil {
 		sender.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: derr.Error()})

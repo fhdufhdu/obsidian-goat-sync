@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -73,6 +74,38 @@ func mustJSON(v interface{}) []byte {
 		panic(err)
 	}
 	return data
+}
+
+func assertNoGoatSyncTempFile(t *testing.T, dir, relativeDir string) {
+	t.Helper()
+	target := filepath.Join(dir, "vaults", relativeDir)
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			t.Fatalf("read dir: %v", err)
+		}
+		return
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".goat-sync-") {
+			t.Fatalf("leftover temp file: %s", entry.Name())
+		}
+	}
+}
+
+func assertNoGoatSyncTrash(t *testing.T, dir, relativeDir string) {
+	t.Helper()
+	trash := filepath.Join(dir, "vaults", relativeDir, ".goat-sync-trash")
+	entries, err := os.ReadDir(trash)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			t.Fatalf("read trash dir: %v", err)
+		}
+		return
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected no lingering trash files, got %d", len(entries))
+	}
 }
 
 func TestHandleVaultCreate(t *testing.T) {
@@ -223,6 +256,103 @@ func TestHandleFileCreate_NoFilePayload(t *testing.T) {
 	if _, err := q.GetFile("personal", "notes/new.md"); err == nil {
 		t.Fatal("expected no db row created when file payload is missing")
 	}
+}
+
+func TestHandleFilePutDoesNotLeaveFileWhenDBFails(t *testing.T) {
+	h, _, s, _ := setupHandler(t)
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:    "filePut",
+		Vault:   "",
+		Path:    "notes/bad.md",
+		Content: "should not stay",
+		File: &FilePayload{
+			Path:      "notes/bad.md",
+			Exists:    true,
+			LocalHash: "hash-bad",
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if resp.Error == "" {
+		t.Fatalf("expected error response, got %#v", resp)
+	}
+	if _, err := s.ReadFile("", "notes/bad.md"); err == nil {
+		t.Fatal("expected no final file after failed message")
+	}
+}
+
+func TestHandleFilePutDoesNotLeaveFileWhenDBMetadataFails(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	q := db.NewQueries(database)
+	s := storage.New(dir)
+	hub := NewHub()
+	go hub.Run()
+	h := NewHandler(q, s, hub)
+
+	_, err = database.Exec(`CREATE TRIGGER fail_file_create BEFORE INSERT ON files WHEN NEW.vault_name = 'personal' AND NEW.path = 'notes/bad.md' BEGIN SELECT RAISE(ABORT, 'forced metadata failure'); END;`)
+	if err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	c := makeClient(hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:    "filePut",
+		Vault:   "personal",
+		Path:    "notes/bad.md",
+		Content: "should not stay",
+		File: &FilePayload{
+			Path:      "notes/bad.md",
+			Exists:    true,
+			LocalHash: "hash-bad",
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if resp.Error == "" {
+		t.Fatalf("expected error response, got %#v", resp)
+	}
+	if _, err := s.ReadFile("personal", "notes/bad.md"); err == nil {
+		t.Fatal("expected no final file after failed message")
+	}
+	if _, err := q.GetFile("personal", "notes/bad.md"); err == nil {
+		t.Fatal("expected no db row after DB failure")
+	}
+	assertNoGoatSyncTempFile(t, dir, filepath.Join("personal", "notes"))
+}
+
+func TestHandleFilePutDoesNotLeaveTempFilesAfterSuccess(t *testing.T) {
+	h, _, _, dir := setupHandler(t)
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:    "filePut",
+		Vault:   "personal",
+		Path:    "notes/new.md",
+		Content: "hello",
+		File: &FilePayload{
+			Path:      "notes/new.md",
+			Exists:    true,
+			LocalHash: "hash-new",
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if resp.Type != "filePutResult" || resp.Error != "" {
+		t.Fatalf("expected successful filePutResult, got %#v", resp)
+	}
+	assertNoGoatSyncTempFile(t, dir, filepath.Join("personal", "notes"))
 }
 
 func TestHandleFilePutCreatesMissingVault(t *testing.T) {
@@ -892,7 +1022,7 @@ func TestHandleFileUpdate_Conflict(t *testing.T) {
 }
 
 func TestHandleFileDelete_Success(t *testing.T) {
-	h, q, s, _ := setupHandler(t)
+	h, q, s, dir := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/old.md", []byte("delete me"))
 	q.CreateFile("personal", "notes/old.md", "hash1")
@@ -923,6 +1053,10 @@ func TestHandleFileDelete_Success(t *testing.T) {
 	if !f.IsDeleted {
 		t.Error("expected file to be marked deleted")
 	}
+	if _, err := s.ReadFile("personal", "notes/old.md"); err == nil {
+		t.Fatal("expected local file to be removed")
+	}
+	assertNoGoatSyncTrash(t, dir, filepath.Join("personal", "notes"))
 }
 
 func TestHandleFileDelete_Conflict(t *testing.T) {

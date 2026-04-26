@@ -154,6 +154,7 @@ func TestDecideSyncInitBaseAwareActiveDiverged(t *testing.T) {
 func TestMatrixFixtures(t *testing.T) {
 	for _, tc := range matrixFixtures() {
 		t.Run(tc.ID, func(t *testing.T) {
+			assertMatrixFixtureConsistent(t, tc)
 			input := DecisionInputFromFixture(tc)
 			got := Decide(input)
 			if got.Action != tc.Expected {
@@ -166,11 +167,7 @@ func TestMatrixFixtures(t *testing.T) {
 func DecisionInputFromFixture(f matrixFixture) DecisionInput {
 	serverVersion := int64(10)
 	deletedFrom := DeletedFromVersion(serverVersion)
-	localHash := "local"
-	serverHash := "server"
-	if f.HashMatch == HashEqual {
-		localHash = serverHash
-	}
+	localHash, serverHash, baseHash := fixtureHashes(f)
 
 	baseVersion := f.BaseVersion
 	switch f.VersionMatch {
@@ -195,13 +192,56 @@ func DecisionInputFromFixture(f matrixFixture) DecisionInput {
 		DeletedFromVersion: deletedFrom,
 	}
 	if f.BaseHashMatch == HashEqual {
-		input.BaseHash = input.LocalHash
+		input.BaseHash = baseHash
 	}
 	if f.BaseHashMatch == HashDifferent {
-		input.BaseHash = "base-hash"
-		input.LocalHash = "local-hash"
+		input.BaseHash = baseHash
 	}
 	input.BaseRowExists = f.BaseRowExists
 	input.AutoMerge = f.AutoMerge
 	return input
+}
+
+func fixtureHashes(f matrixFixture) (localHash, serverHash, baseHash string) {
+	serverHash = "server-hash"
+	switch f.HashMatch {
+	case HashEqual:
+		localHash = serverHash
+	case HashDifferent, HashNotApplicable:
+		localHash = "local-hash"
+	}
+
+	switch f.BaseHashMatch {
+	case HashEqual:
+		baseHash = localHash
+	case HashDifferent:
+		baseHash = "base-hash"
+		if baseHash == localHash {
+			baseHash = "other-base-hash"
+		}
+	}
+	return localHash, serverHash, baseHash
+}
+
+func assertMatrixFixtureConsistent(t *testing.T, f matrixFixture) {
+	t.Helper()
+	if !f.BaseRowExists {
+		if f.BaseHashMatch != HashNotApplicable {
+			t.Fatalf("base row missing but base hash match is %s", f.BaseHashMatch)
+		}
+		if f.AutoMerge != AutoMergeNotApplicable {
+			t.Fatalf("base row missing but auto merge is %s", f.AutoMerge)
+		}
+	}
+	if f.BaseHashMatch != HashNotApplicable && !f.BaseRowExists {
+		t.Fatalf("base hash match %s requires a base row", f.BaseHashMatch)
+	}
+	if f.AutoMerge != AutoMergeNotApplicable {
+		if !f.BaseRowExists {
+			t.Fatalf("auto merge %s requires a base row", f.AutoMerge)
+		}
+		if f.BaseHashMatch != HashDifferent {
+			t.Fatalf("auto merge %s requires localHash != baseHash, got %s", f.AutoMerge, f.BaseHashMatch)
+		}
+	}
 }

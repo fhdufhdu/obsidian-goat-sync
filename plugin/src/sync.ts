@@ -98,6 +98,7 @@ export class SyncManager {
 
   async start(): Promise<boolean> {
     this.wsClient.on("syncResult", (msg) => this.handleSyncResult(msg));
+    this.wsClient.on("error", (msg) => this.handleServerError(msg));
 
     this.wsClient.on("fileCheckResult", (msg) => this.handleFileCheckResult(msg));
 
@@ -238,7 +239,18 @@ export class SyncManager {
     }
   }
 
+  handleServerError(msg: ServerMessage): boolean {
+    if (!msg.error) return false;
+    console.error("[obsidian-goat-sync] server error", msg);
+    const message = msg.path
+      ? `[obsidian-goat-sync] ${msg.type} failed for ${msg.path}: ${msg.error}`
+      : `[obsidian-goat-sync] ${msg.type} failed: ${msg.error}`;
+    new Notice(message);
+    return true;
+  }
+
   private async handleFilePutResult(msg: ServerMessage) {
+    if (this.handleServerError(msg)) return;
     if (!msg.path) return;
     if (msg.action === "okUpdateMeta" && msg.meta) {
       this.fileMeta.set(msg.path, {
@@ -269,6 +281,7 @@ export class SyncManager {
   }
 
   private async handleFileDeleteResult(msg: ServerMessage) {
+    if (this.handleServerError(msg)) return;
     if (!msg.path) return;
     if (msg.action === "okRemoveMeta") {
       this.fileMeta.remove(msg.path);
@@ -293,6 +306,7 @@ export class SyncManager {
   }
 
   private async handleFileCheckResult(msg: ServerMessage) {
+    if (this.handleServerError(msg)) return;
     if (!msg.path || !msg.action) return;
     switch (msg.action) {
       case "upToDate":
@@ -348,6 +362,7 @@ export class SyncManager {
   }
 
   private async handleConflictResolveResult(msg: ServerMessage) {
+    if (this.handleServerError(msg)) return;
     if (!msg.path) return;
     if (msg.ok) {
       const existing = this.conflictQueue.get(msg.path);

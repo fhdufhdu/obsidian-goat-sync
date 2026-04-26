@@ -3,76 +3,88 @@ package sync
 import "testing"
 
 type matrixFixture struct {
-	ID           string
-	Message      MatrixMessage
-	ClientExists bool
-	BaseVersion  *int64
-	ServerState  ServerStateKind
-	VersionMatch VersionMatch
-	HashMatch    HashMatch
-	Expected     MatrixAction
+	ID            string
+	Message       MatrixMessage
+	ClientExists  bool
+	BaseVersion   *int64
+	ServerState   ServerStateKind
+	VersionMatch  VersionMatch
+	HashMatch     HashMatch
+	BaseRowExists bool
+	BaseHashMatch HashMatch
+	AutoMerge     AutoMergeState
+	Expected      MatrixAction
 }
 
 func ptr64(v int64) *int64 { return &v }
 
 func matrixFixtures() []matrixFixture {
 	return []matrixFixture{
-		{ID: "M001", Message: MessageSyncInit, ClientExists: true, BaseVersion: nil, ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionToPut},
-		{ID: "M002", Message: MessageSyncInit, ClientExists: true, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashEqual, Expected: MatrixActionToUpdateMeta},
-		{ID: "M003", Message: MessageSyncInit, ClientExists: true, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashDifferent, Expected: MatrixActionConflict},
-		{ID: "M004", Message: MessageSyncInit, ClientExists: true, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashEqual, Expected: MatrixActionToDeleteLocal},
-		{ID: "M005", Message: MessageSyncInit, ClientExists: true, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashDifferent, Expected: MatrixActionDeleteConflict},
-		{ID: "M006", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualServer, HashMatch: HashEqual, Expected: MatrixActionToDeleteLocal},
-		{ID: "M007", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualServer, HashMatch: HashDifferent, Expected: MatrixActionToPut},
-		{ID: "M008", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualServer, HashMatch: HashEqual, Expected: MatrixActionToDeleteLocal},
-		{ID: "M009", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, Expected: MatrixActionDeleteConflict},
-		{ID: "M010", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashEqual, Expected: MatrixActionNone},
-		{ID: "M011", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashDifferent, Expected: MatrixActionToPut},
-		{ID: "M012", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashEqual, Expected: MatrixActionToUpdateMeta},
-		{ID: "M013", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, Expected: MatrixActionConflict},
-		{ID: "M014", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionConflict},
-		{ID: "M015", Message: MessageSyncInit, ClientExists: false, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionToDownload},
-		{ID: "M016", Message: MessageSyncInit, ClientExists: false, BaseVersion: nil, ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionNone},
-		{ID: "M017", Message: MessageSyncInit, ClientExists: false, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionNone},
-		{ID: "M018", Message: MessageSyncInit, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionAny, HashMatch: HashNotApplicable, Expected: MatrixActionDeleteConflict},
-		{ID: "M019", Message: MessageSyncInit, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionToRemoveMeta},
-		{ID: "M020", Message: MessageSyncInit, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionToUpdateMeta},
-		{ID: "M021", Message: MessageFileCheck, ClientExists: true, BaseVersion: nil, ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionPut},
-		{ID: "M022", Message: MessageFileCheck, ClientExists: true, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashEqual, Expected: MatrixActionUpdateMeta},
-		{ID: "M023", Message: MessageFileCheck, ClientExists: true, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashDifferent, Expected: MatrixActionConflict},
-		{ID: "M024", Message: MessageFileCheck, ClientExists: true, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashEqual, Expected: MatrixActionToDeleteLocal},
-		{ID: "M025", Message: MessageFileCheck, ClientExists: true, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashDifferent, Expected: MatrixActionDeleteConflict},
-		{ID: "M026", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualServer, HashMatch: HashEqual, Expected: MatrixActionToDeleteLocal},
-		{ID: "M027", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualServer, HashMatch: HashDifferent, Expected: MatrixActionPut},
-		{ID: "M028", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualServer, HashMatch: HashEqual, Expected: MatrixActionToDeleteLocal},
-		{ID: "M029", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, Expected: MatrixActionDeleteConflict},
-		{ID: "M030", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashEqual, Expected: MatrixActionUpToDate},
-		{ID: "M031", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashDifferent, Expected: MatrixActionPut},
-		{ID: "M032", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashEqual, Expected: MatrixActionUpdateMeta},
-		{ID: "M033", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, Expected: MatrixActionConflict},
-		{ID: "M034", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionConflict},
-		{ID: "M035", Message: MessageFilePut, ClientExists: true, BaseVersion: nil, ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionOkUpdateMeta},
-		{ID: "M036", Message: MessageFilePut, ClientExists: true, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashEqual, Expected: MatrixActionOkUpdateMeta},
-		{ID: "M037", Message: MessageFilePut, ClientExists: true, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashDifferent, Expected: MatrixActionConflict},
-		{ID: "M038", Message: MessageFilePut, ClientExists: true, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashEqual, Expected: MatrixActionToDeleteLocal},
-		{ID: "M039", Message: MessageFilePut, ClientExists: true, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashDifferent, Expected: MatrixActionDeleteConflict},
-		{ID: "M040", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualServer, HashMatch: HashEqual, Expected: MatrixActionToDeleteLocal},
-		{ID: "M041", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualServer, HashMatch: HashDifferent, Expected: MatrixActionOkUpdateMeta},
-		{ID: "M042", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualServer, HashMatch: HashEqual, Expected: MatrixActionToDeleteLocal},
-		{ID: "M043", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, Expected: MatrixActionDeleteConflict},
-		{ID: "M044", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionConflict},
-		{ID: "M045", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashEqual, Expected: MatrixActionOkUpdateMeta},
-		{ID: "M046", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashDifferent, Expected: MatrixActionOkUpdateMeta},
-		{ID: "M047", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashEqual, Expected: MatrixActionOkUpdateMeta},
-		{ID: "M048", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, Expected: MatrixActionConflict},
-		{ID: "M049", Message: MessageFileDelete, ClientExists: false, BaseVersion: nil, ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionOkRemoveMeta},
-		{ID: "M050", Message: MessageFileDelete, ClientExists: false, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionDeleteConflict},
-		{ID: "M051", Message: MessageFileDelete, ClientExists: false, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionOkRemoveMeta},
-		{ID: "M052", Message: MessageFileDelete, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashNotApplicable, Expected: MatrixActionOkUpdateMeta},
-		{ID: "M053", Message: MessageFileDelete, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashNotApplicable, Expected: MatrixActionDeleteConflict},
-		{ID: "M054", Message: MessageFileDelete, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, Expected: MatrixActionOkRemoveMeta},
-		{ID: "M055", Message: MessageFileDelete, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualDeletedFrom, HashMatch: HashNotApplicable, Expected: MatrixActionOkUpdateMeta},
-		{ID: "M056", Message: MessageFileDelete, ClientExists: false, BaseVersion: ptr64(9), ServerState: ServerTombstone, VersionMatch: VersionNotEqualDeletedFrom, HashMatch: HashNotApplicable, Expected: MatrixActionDeleteConflict},
+		{ID: "M001", Message: MessageSyncInit, ClientExists: true, BaseVersion: nil, ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToPut},
+		{ID: "M002", Message: MessageSyncInit, ClientExists: true, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToUpdateMeta},
+		{ID: "M003", Message: MessageSyncInit, ClientExists: true, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionConflict},
+		{ID: "M004", Message: MessageSyncInit, ClientExists: true, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDeleteLocal},
+		{ID: "M005", Message: MessageSyncInit, ClientExists: true, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionDeleteConflict},
+		{ID: "M006", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualServer, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDeleteLocal},
+		{ID: "M007", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualServer, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToPut},
+		{ID: "M008", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualServer, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDeleteLocal},
+		{ID: "M009", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionDeleteConflict},
+		{ID: "M010", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionNone},
+		{ID: "M011", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToPut},
+		{ID: "M012", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToUpdateMeta},
+		{ID: "M013", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: true, BaseHashMatch: HashEqual, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDownload},
+		{ID: "M014", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: true, BaseHashMatch: HashDifferent, AutoMerge: AutoMergePossible, Expected: MatrixActionAutoMerge},
+		{ID: "M015", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: true, BaseHashMatch: HashDifferent, AutoMerge: AutoMergeImpossible, Expected: MatrixActionConflict},
+		{ID: "M016", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionConflict},
+		{ID: "M017", Message: MessageSyncInit, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionConflict},
+		{ID: "M018", Message: MessageSyncInit, ClientExists: false, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDownload},
+		{ID: "M019", Message: MessageSyncInit, ClientExists: false, BaseVersion: nil, ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionNone},
+		{ID: "M020", Message: MessageSyncInit, ClientExists: false, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionNone},
+		{ID: "M021", Message: MessageSyncInit, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionAny, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionDeleteConflict},
+		{ID: "M022", Message: MessageSyncInit, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToRemoveMeta},
+		{ID: "M023", Message: MessageSyncInit, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToUpdateMeta},
+		{ID: "M024", Message: MessageFileCheck, ClientExists: true, BaseVersion: nil, ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionPut},
+		{ID: "M025", Message: MessageFileCheck, ClientExists: true, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionUpdateMeta},
+		{ID: "M026", Message: MessageFileCheck, ClientExists: true, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionConflict},
+		{ID: "M027", Message: MessageFileCheck, ClientExists: true, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDeleteLocal},
+		{ID: "M028", Message: MessageFileCheck, ClientExists: true, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionDeleteConflict},
+		{ID: "M029", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualServer, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDeleteLocal},
+		{ID: "M030", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualServer, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionPut},
+		{ID: "M031", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualServer, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDeleteLocal},
+		{ID: "M032", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionDeleteConflict},
+		{ID: "M033", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionUpToDate},
+		{ID: "M034", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionPut},
+		{ID: "M035", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionUpdateMeta},
+		{ID: "M036", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: true, BaseHashMatch: HashEqual, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDownload},
+		{ID: "M037", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: true, BaseHashMatch: HashDifferent, AutoMerge: AutoMergePossible, Expected: MatrixActionAutoMerge},
+		{ID: "M038", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: true, BaseHashMatch: HashDifferent, AutoMerge: AutoMergeImpossible, Expected: MatrixActionConflict},
+		{ID: "M039", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionConflict},
+		{ID: "M040", Message: MessageFileCheck, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionConflict},
+		{ID: "M041", Message: MessageFilePut, ClientExists: true, BaseVersion: nil, ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionOkUpdateMeta},
+		{ID: "M042", Message: MessageFilePut, ClientExists: true, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionOkUpdateMeta},
+		{ID: "M043", Message: MessageFilePut, ClientExists: true, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionConflict},
+		{ID: "M044", Message: MessageFilePut, ClientExists: true, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDeleteLocal},
+		{ID: "M045", Message: MessageFilePut, ClientExists: true, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionDeleteConflict},
+		{ID: "M046", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualServer, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDeleteLocal},
+		{ID: "M047", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualServer, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionOkUpdateMeta},
+		{ID: "M048", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualServer, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDeleteLocal},
+		{ID: "M049", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionDeleteConflict},
+		{ID: "M050", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionConflict},
+		{ID: "M051", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionOkUpdateMeta},
+		{ID: "M052", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionOkUpdateMeta},
+		{ID: "M053", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashEqual, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionOkUpdateMeta},
+		{ID: "M054", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: true, BaseHashMatch: HashEqual, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionToDownload},
+		{ID: "M055", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: true, BaseHashMatch: HashDifferent, AutoMerge: AutoMergePossible, Expected: MatrixActionAutoMerge},
+		{ID: "M056", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: true, BaseHashMatch: HashDifferent, AutoMerge: AutoMergeImpossible, Expected: MatrixActionConflict},
+		{ID: "M057", Message: MessageFilePut, ClientExists: true, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashDifferent, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionConflict},
+		{ID: "M058", Message: MessageFileDelete, ClientExists: false, BaseVersion: nil, ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionOkRemoveMeta},
+		{ID: "M059", Message: MessageFileDelete, ClientExists: false, BaseVersion: nil, ServerState: ServerActive, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionDeleteConflict},
+		{ID: "M060", Message: MessageFileDelete, ClientExists: false, BaseVersion: nil, ServerState: ServerTombstone, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionOkRemoveMeta},
+		{ID: "M061", Message: MessageFileDelete, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionEqualServer, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionOkUpdateMeta},
+		{ID: "M062", Message: MessageFileDelete, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerActive, VersionMatch: VersionNotEqualServer, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionDeleteConflict},
+		{ID: "M063", Message: MessageFileDelete, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerMissing, VersionMatch: VersionNotApplicable, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionOkRemoveMeta},
+		{ID: "M064", Message: MessageFileDelete, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionEqualDeletedFrom, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionOkUpdateMeta},
+		{ID: "M065", Message: MessageFileDelete, ClientExists: false, BaseVersion: ptr64(10), ServerState: ServerTombstone, VersionMatch: VersionNotEqualDeletedFrom, HashMatch: HashNotApplicable, BaseRowExists: false, BaseHashMatch: HashNotApplicable, AutoMerge: AutoMergeNotApplicable, Expected: MatrixActionDeleteConflict},
 	}
 }
 
@@ -172,7 +184,7 @@ func DecisionInputFromFixture(f matrixFixture) DecisionInput {
 		baseVersion = ptr64(deletedFrom - 1)
 	}
 
-	return DecisionInput{
+	input := DecisionInput{
 		Message:            f.Message,
 		ClientExists:       f.ClientExists,
 		BaseVersion:        baseVersion,
@@ -182,4 +194,14 @@ func DecisionInputFromFixture(f matrixFixture) DecisionInput {
 		ServerHash:         serverHash,
 		DeletedFromVersion: deletedFrom,
 	}
+	if f.BaseHashMatch == HashEqual {
+		input.BaseHash = input.LocalHash
+	}
+	if f.BaseHashMatch == HashDifferent {
+		input.BaseHash = "base-hash"
+		input.LocalHash = "local-hash"
+	}
+	input.BaseRowExists = f.BaseRowExists
+	input.AutoMerge = f.AutoMerge
+	return input
 }

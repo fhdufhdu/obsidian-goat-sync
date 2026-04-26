@@ -141,3 +141,77 @@ func TestDeleteVaultDir(t *testing.T) {
 		t.Fatal("expected vault dir removed")
 	}
 }
+
+func TestStageWriteCommitAndCleanup(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+
+	stage, err := s.StageWrite("personal", "notes/a.md", []byte("hello"))
+	if err != nil {
+		t.Fatalf("stage write: %v", err)
+	}
+	if _, err := os.Stat(stage.TempPath); err != nil {
+		t.Fatalf("expected temp file: %v", err)
+	}
+	if err := stage.Commit(); err != nil {
+		t.Fatalf("commit staged write: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "vaults", "personal", "notes", "a.md"))
+	if err != nil {
+		t.Fatalf("read final file: %v", err)
+	}
+	if string(content) != "hello" {
+		t.Fatalf("content = %q", content)
+	}
+}
+
+func TestStageWriteRollbackRemovesTemp(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+
+	stage, err := s.StageWrite("personal", "notes/a.md", []byte("hello"))
+	if err != nil {
+		t.Fatalf("stage write: %v", err)
+	}
+	tempPath := stage.TempPath
+	if err := stage.Rollback(); err != nil {
+		t.Fatalf("rollback staged write: %v", err)
+	}
+	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
+		t.Fatalf("expected temp file removed, got %v", err)
+	}
+}
+
+func TestStageDeleteRestoreAndFinalize(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	if err := s.WriteFile("personal", "notes/a.md", []byte("hello")); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	stage, err := s.StageDelete("personal", "notes/a.md")
+	if err != nil {
+		t.Fatalf("stage delete: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "vaults", "personal", "notes", "a.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected original moved away, got %v", err)
+	}
+	if err := stage.Rollback(); err != nil {
+		t.Fatalf("rollback delete: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "vaults", "personal", "notes", "a.md")); err != nil {
+		t.Fatalf("expected original restored: %v", err)
+	}
+
+	stage, err = s.StageDelete("personal", "notes/a.md")
+	if err != nil {
+		t.Fatalf("stage delete again: %v", err)
+	}
+	if err := stage.Commit(); err != nil {
+		t.Fatalf("commit delete: %v", err)
+	}
+	if _, err := os.Stat(stage.TempPath); !os.IsNotExist(err) {
+		t.Fatalf("expected trash removed, got %v", err)
+	}
+}

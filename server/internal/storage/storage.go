@@ -14,6 +14,27 @@ func New(dataDir string) *Storage {
 	return &Storage{dataDir: dataDir}
 }
 
+type StagedFileOp struct {
+	TempPath  string
+	FinalPath string
+	commit    func() error
+	rollback  func() error
+}
+
+func (op *StagedFileOp) Commit() error {
+	if op == nil || op.commit == nil {
+		return nil
+	}
+	return op.commit()
+}
+
+func (op *StagedFileOp) Rollback() error {
+	if op == nil || op.rollback == nil {
+		return nil
+	}
+	return op.rollback()
+}
+
 func (s *Storage) vaultPath(vault, filePath string) string {
 	return filepath.Join(s.dataDir, "vaults", vault, filePath)
 }
@@ -40,6 +61,89 @@ func (s *Storage) CreateVaultDir(vault string) error {
 
 func (s *Storage) DeleteVaultDir(vault string) error {
 	return os.RemoveAll(filepath.Join(s.dataDir, "vaults", vault))
+}
+
+func (s *Storage) StageWrite(vault, filePath string, data []byte) (*StagedFileOp, error) {
+	final := s.vaultPath(vault, filePath)
+	if err := os.MkdirAll(filepath.Dir(final), 0755); err != nil {
+		return nil, err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(final), ".goat-sync-*")
+	if err != nil {
+		return nil, err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		_ = os.Remove(tmpPath)
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, err
+	}
+	return &StagedFileOp{
+		TempPath:  tmpPath,
+		FinalPath: final,
+		commit: func() error {
+			if err := os.MkdirAll(filepath.Dir(final), 0755); err != nil {
+				return err
+			}
+			return os.Rename(tmpPath, final)
+		},
+		rollback: func() error {
+			err := os.Remove(tmpPath)
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		},
+	}, nil
+}
+
+func (s *Storage) StageDelete(vault, filePath string) (*StagedFileOp, error) {
+	final := s.vaultPath(vault, filePath)
+	trashDir := filepath.Join(filepath.Dir(final), ".goat-sync-trash")
+	if err := os.MkdirAll(trashDir, 0755); err != nil {
+		return nil, err
+	}
+	tmp, err := os.CreateTemp(trashDir, filepath.Base(filePath)+".*")
+	if err != nil {
+		return nil, err
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, err
+	}
+	_ = os.Remove(tmpPath)
+	if err := os.Rename(final, tmpPath); err != nil {
+		if os.IsNotExist(err) {
+			return &StagedFileOp{}, nil
+		}
+		return nil, err
+	}
+	return &StagedFileOp{
+		TempPath:  tmpPath,
+		FinalPath: final,
+		commit: func() error {
+			err := os.Remove(tmpPath)
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		},
+		rollback: func() error {
+			if err := os.MkdirAll(filepath.Dir(final), 0755); err != nil {
+				return err
+			}
+			err := os.Rename(tmpPath, final)
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		},
+	}, nil
 }
 
 func (s *Storage) VaultStats(vault string) (fileCount int, totalSize int64, err error) {

@@ -34,17 +34,23 @@ func migrate(db *sql.DB) error {
 		updated_at  TEXT NOT NULL
 	);
 
-	CREATE TABLE IF NOT EXISTS files (
+	CREATE TABLE IF NOT EXISTS file_versions (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
 		vault_name  TEXT NOT NULL,
 		path        TEXT NOT NULL,
-		version     INTEGER NOT NULL DEFAULT 1,
+		version     INTEGER NOT NULL,
 		hash        TEXT NOT NULL,
+		content_ref TEXT,
+		encoding    TEXT NOT NULL DEFAULT '',
 		is_deleted  INTEGER NOT NULL DEFAULT 0,
 		inserted_at TEXT NOT NULL,
 		updated_at  TEXT NOT NULL,
-		PRIMARY KEY (vault_name, path),
+		UNIQUE (vault_name, path, version),
 		FOREIGN KEY (vault_name) REFERENCES vaults(name) ON DELETE CASCADE
 	);
+
+	CREATE INDEX IF NOT EXISTS idx_file_versions_latest
+	ON file_versions(vault_name, path, version DESC);
 
 	CREATE TABLE IF NOT EXISTS tokens (
 		token       TEXT PRIMARY KEY,

@@ -448,13 +448,14 @@ func (h *Handler) handleFilePut(sender messageSender, msg IncomingMessage, final
 		*finalizers = append(*finalizers, stage.Commit)
 		*rollbacks = append(*rollbacks, stage.Rollback)
 
+		contentRef := contentRefForHash(msg.File.LocalHash)
 		var newFile db.File
 		if !serverExists {
-			newFile, err = h.queries.CreateFile(msg.Vault, path, msg.File.LocalHash)
+			newFile, err = h.queries.CreateFile(msg.Vault, path, msg.File.LocalHash, contentRef, msg.Encoding)
 		} else if sf.IsDeleted {
-			newFile, err = h.queries.CreateFileFromTombstone(msg.Vault, path, msg.File.LocalHash, sf.Version)
+			newFile, err = h.queries.CreateFileFromTombstone(msg.Vault, path, msg.File.LocalHash, contentRef, msg.Encoding, sf.Version)
 		} else if msg.File.BaseVersion != nil && *msg.File.BaseVersion == sf.Version && msg.File.LocalHash != sf.Hash {
-			newFile, err = h.queries.UpdateFile(msg.Vault, path, msg.File.LocalHash)
+			newFile, err = h.queries.UpdateFile(msg.Vault, path, msg.File.LocalHash, contentRef, msg.Encoding)
 		} else {
 			newFile = sf
 		}
@@ -619,7 +620,7 @@ func (h *Handler) handleConflictResolveUpdate(sender messageSender, msg Incoming
 	*finalizers = append(*finalizers, stage.Commit)
 	*rollbacks = append(*rollbacks, stage.Rollback)
 
-	newFile, uerr := h.queries.UpdateFile(msg.Vault, msg.Path, localHash)
+	newFile, uerr := h.queries.UpdateFile(msg.Vault, msg.Path, localHash, contentRefForHash(localHash), msg.Encoding)
 	if uerr != nil {
 		sender.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: uerr.Error()})
 		return
@@ -755,6 +756,10 @@ func decodeContent(content, encoding string) []byte {
 		return data
 	}
 	return []byte(content)
+}
+
+func contentRefForHash(hash string) string {
+	return "sha256:" + hash
 }
 
 func encodeContent(data []byte) (encoding string, content string) {

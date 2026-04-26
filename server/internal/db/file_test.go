@@ -84,6 +84,57 @@ func TestCreateFileFromTombstone(t *testing.T) {
 	}
 }
 
+func TestCreateFileFromTombstoneRejectsWrongPrevVersion(t *testing.T) {
+	q := setupTestDB(t)
+	q.CreateVault("personal")
+	q.CreateFile("personal", "notes/hello.md", "abc123", "sha256:abc123", "")
+	tombstone, err := q.DeleteFile("personal", "notes/hello.md")
+	if err != nil {
+		t.Fatalf("delete file: %v", err)
+	}
+
+	for _, prevVersion := range []int64{tombstone.Version - 1, tombstone.Version + 1} {
+		if _, err := q.CreateFileFromTombstone("personal", "notes/hello.md", "newHash", "sha256:newHash", "", prevVersion); err == nil {
+			t.Fatalf("expected error for prevVersion=%d", prevVersion)
+		}
+	}
+
+	latest, err := q.GetFile("personal", "notes/hello.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Version != tombstone.Version || !latest.IsDeleted {
+		t.Fatalf("unexpected append after rejected recreate: %#v", latest)
+	}
+	if _, err := q.GetFileVersion("personal", "notes/hello.md", tombstone.Version+1); err != sql.ErrNoRows {
+		t.Fatalf("expected no appended version, got err=%v", err)
+	}
+}
+
+func TestCreateFileFromTombstoneRejectsActiveLatest(t *testing.T) {
+	q := setupTestDB(t)
+	q.CreateVault("personal")
+	active, err := q.CreateFile("personal", "notes/hello.md", "abc123", "sha256:abc123", "")
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+
+	if _, err := q.CreateFileFromTombstone("personal", "notes/hello.md", "newHash", "sha256:newHash", "", active.Version); err == nil {
+		t.Fatal("expected error when latest row is active")
+	}
+
+	latest, err := q.GetFile("personal", "notes/hello.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Version != active.Version || latest.IsDeleted || latest.Hash != active.Hash {
+		t.Fatalf("unexpected append after active recreate: %#v", latest)
+	}
+	if _, err := q.GetFileVersion("personal", "notes/hello.md", active.Version+1); err != sql.ErrNoRows {
+		t.Fatalf("expected no appended version, got err=%v", err)
+	}
+}
+
 func TestGetFileNotFound(t *testing.T) {
 	q := setupTestDB(t)
 	q.CreateVault("personal")

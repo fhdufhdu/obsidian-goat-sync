@@ -2,7 +2,13 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"time"
+)
+
+var (
+	ErrFileVersionMismatch = errors.New("file version mismatch")
+	ErrFileNotTombstone    = errors.New("file is not a tombstone")
 )
 
 type File struct {
@@ -47,12 +53,17 @@ func (q *Queries) CreateFile(vaultName, path, hash, contentRef, encoding string)
 }
 
 func (q *Queries) CreateFileFromTombstone(vaultName, path, hash, contentRef, encoding string, prevVersion int64) (File, error) {
-	_ = prevVersion
 	var file File
 	err := q.InTx(func(txq *Queries) error {
 		latest, err := txq.GetFile(vaultName, path)
 		if err != nil {
 			return err
+		}
+		if latest.Version != prevVersion {
+			return ErrFileVersionMismatch
+		}
+		if !latest.IsDeleted {
+			return ErrFileNotTombstone
 		}
 		inserted, err := txq.insertFileVersion(vaultName, path, latest.Version+1, hash, contentRef, encoding, false)
 		if err != nil {

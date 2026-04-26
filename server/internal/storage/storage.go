@@ -82,6 +82,10 @@ func (s *Storage) StageWrite(vault, filePath string, data []byte) (*StagedFileOp
 		_ = os.Remove(tmpPath)
 		return nil, err
 	}
+	if err := os.Chmod(tmpPath, 0644); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, err
+	}
 	return &StagedFileOp{
 		TempPath:  tmpPath,
 		FinalPath: final,
@@ -103,6 +107,12 @@ func (s *Storage) StageWrite(vault, filePath string, data []byte) (*StagedFileOp
 
 func (s *Storage) StageDelete(vault, filePath string) (*StagedFileOp, error) {
 	final := s.vaultPath(vault, filePath)
+	if _, err := os.Stat(final); err != nil {
+		if os.IsNotExist(err) {
+			return &StagedFileOp{FinalPath: final}, nil
+		}
+		return nil, err
+	}
 	trashDir := filepath.Join(filepath.Dir(final), ".goat-sync-trash")
 	if err := os.MkdirAll(trashDir, 0755); err != nil {
 		return nil, err

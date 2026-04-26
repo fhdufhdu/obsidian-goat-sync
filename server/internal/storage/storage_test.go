@@ -164,6 +164,13 @@ func TestStageWriteCommitAndCleanup(t *testing.T) {
 	if string(content) != "hello" {
 		t.Fatalf("content = %q", content)
 	}
+	info, err := os.Stat(filepath.Join(dir, "vaults", "personal", "notes", "a.md"))
+	if err != nil {
+		t.Fatalf("stat final file: %v", err)
+	}
+	if info.Mode().Perm() != 0644 {
+		t.Fatalf("mode = %v, want 0644", info.Mode().Perm())
+	}
 }
 
 func TestStageWriteRollbackRemovesTemp(t *testing.T) {
@@ -213,5 +220,25 @@ func TestStageDeleteRestoreAndFinalize(t *testing.T) {
 	}
 	if _, err := os.Stat(stage.TempPath); !os.IsNotExist(err) {
 		t.Fatalf("expected trash removed, got %v", err)
+	}
+}
+
+func TestStageDeleteMissingFileIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+
+	stage, err := s.StageDelete("personal", "notes/missing.md")
+	if err != nil {
+		t.Fatalf("stage delete missing file: %v", err)
+	}
+	if err := stage.Commit(); err != nil {
+		t.Fatalf("commit missing delete: %v", err)
+	}
+	if err := stage.Rollback(); err != nil {
+		t.Fatalf("rollback missing delete: %v", err)
+	}
+	trashDir := filepath.Join(dir, "vaults", "personal", "notes", ".goat-sync-trash")
+	if _, err := os.Stat(trashDir); !os.IsNotExist(err) {
+		t.Fatalf("expected no trash directory for missing file, got %v", err)
 	}
 }

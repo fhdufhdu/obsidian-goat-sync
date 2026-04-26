@@ -586,6 +586,16 @@ func (h *Handler) handleConflictResolveUpdate(sender messageSender, msg Incoming
 	}
 
 	if optResult.Noop {
+		if msg.Content != "" {
+			fileContent := decodeContent(msg.Content, msg.Encoding)
+			stage, err := h.storage.StageWrite(msg.Vault, msg.Path, fileContent)
+			if err != nil {
+				sender.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
+				return
+			}
+			*finalizers = append(*finalizers, stage.Commit)
+			*rollbacks = append(*rollbacks, stage.Rollback)
+		}
 		sender.SendMessage(OutgoingMessage{
 			Type: "conflictResolveResult",
 			Path: msg.Path,

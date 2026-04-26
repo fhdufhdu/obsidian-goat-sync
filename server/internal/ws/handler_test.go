@@ -1144,6 +1144,49 @@ func TestHandleConflictResolve_LocalUpdate_Success(t *testing.T) {
 	assertResponseMetaVersion(t, resp, 2)
 }
 
+func TestHandleConflictResolve_LocalUpdate_IdempotentRetryRewritesFile(t *testing.T) {
+	h, q, s, _ := setupHandler(t)
+	q.CreateVault("personal")
+	q.CreateFile("personal", "notes/hello.md", "serverhash")
+	updated, err := q.UpdateFile("personal", "notes/hello.md", "localhash")
+	if err != nil {
+		t.Fatalf("update setup: %v", err)
+	}
+	base := updated.Version - 1
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:       "conflictResolve",
+		Vault:      "personal",
+		Path:       "notes/hello.md",
+		Resolution: "local",
+		Content:    "local content",
+		File: &FilePayload{
+			BaseVersion: &base,
+			LocalHash:   "localhash",
+		},
+	}))
+
+	resp := readResponse(t, c)
+	if resp.Type != "conflictResolveResult" {
+		t.Fatalf("expected conflictResolveResult, got %s", resp.Type)
+	}
+	if resp.Ok == nil || !*resp.Ok {
+		t.Fatalf("expected ok=true, got %#v", resp)
+	}
+	assertResponseMetaVersion(t, resp, updated.Version)
+
+	content, err := s.ReadFile("personal", "notes/hello.md")
+	if err != nil {
+		t.Fatalf("expected retry to write file content: %v", err)
+	}
+	if string(content) != "local content" {
+		t.Fatalf("content = %q", content)
+	}
+}
+
 func TestHandleConflictResolve_LocalUpdate_Reconflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")

@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -38,6 +40,66 @@ func TestUpdateFile(t *testing.T) {
 	}
 	if f.Hash != "def456" {
 		t.Errorf("expected hash=def456, got %s", f.Hash)
+	}
+}
+
+func TestUpdateFileConcurrentAppendsAllocateVersions(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	database, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	q := NewQueries(database)
+	if err := q.CreateVault("personal"); err != nil {
+		t.Fatalf("create vault: %v", err)
+	}
+	if _, err := q.CreateFile("personal", "notes/hello.md", "base", "sha256:base", ""); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+
+	const writers = 16
+	errs := make(chan error, writers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+
+			db, err := Open(dbPath)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer db.Close()
+
+			hash := "hash" + string(rune('a'+i))
+			_, err = NewQueries(db).UpdateFile("personal", "notes/hello.md", hash, "sha256:"+hash, "")
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent update failed: %v", err)
+		}
+	}
+
+	latest, err := q.GetFile("personal", "notes/hello.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Version != writers+1 {
+		t.Fatalf("latest version = %d, want %d", latest.Version, writers+1)
+	}
+	for version := int64(1); version <= writers+1; version++ {
+		if _, err := q.GetFileVersion("personal", "notes/hello.md", version); err != nil {
+			t.Fatalf("missing version %d: %v", version, err)
+		}
 	}
 }
 

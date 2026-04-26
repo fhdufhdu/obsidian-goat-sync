@@ -76,6 +76,69 @@ func matrixFixtures() []matrixFixture {
 	}
 }
 
+func TestDecideSyncInitBaseAwareActiveDiverged(t *testing.T) {
+	tests := []struct {
+		name string
+		in   DecisionInput
+		want MatrixAction
+	}{
+		{
+			name: "local unchanged from base downloads latest server",
+			in: DecisionInput{
+				Message:       MessageSyncInit,
+				ClientExists:  true,
+				BaseVersion:   int64Ptr(1),
+				LocalHash:     "base",
+				ServerState:   ServerActive,
+				ServerVersion: 2,
+				ServerHash:    "server",
+				BaseRowExists: true,
+				BaseHash:      "base",
+			},
+			want: MatrixActionToDownload,
+		},
+		{
+			name: "both changed and clean merge required",
+			in: DecisionInput{
+				Message:       MessageSyncInit,
+				ClientExists:  true,
+				BaseVersion:   int64Ptr(1),
+				LocalHash:     "local",
+				ServerState:   ServerActive,
+				ServerVersion: 2,
+				ServerHash:    "server",
+				BaseRowExists: true,
+				BaseHash:      "base",
+				AutoMerge:     AutoMergePossible,
+			},
+			want: MatrixActionAutoMerge,
+		},
+		{
+			name: "missing base row remains conflict",
+			in: DecisionInput{
+				Message:       MessageSyncInit,
+				ClientExists:  true,
+				BaseVersion:   int64Ptr(1),
+				LocalHash:     "local",
+				ServerState:   ServerActive,
+				ServerVersion: 2,
+				ServerHash:    "server",
+				BaseRowExists: false,
+			},
+			want: MatrixActionConflict,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DecideSyncInit(tt.in)
+			if got.Action != tt.want {
+				t.Fatalf("action = %s, want %s", got.Action, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatrixFixtures(t *testing.T) {
 	for _, tc := range matrixFixtures() {
 		t.Run(tc.ID, func(t *testing.T) {

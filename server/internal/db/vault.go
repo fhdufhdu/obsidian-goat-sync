@@ -41,12 +41,28 @@ func (q *Queries) InTx(fn func(*Queries) error) error {
 		return err
 	}
 
+	done := false
+	defer func() {
+		if !done {
+			_ = tx.Rollback()
+		}
+	}()
+
 	txq := newTxQueries(tx)
 	if err := fn(txq); err != nil {
-		_ = tx.Rollback()
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			done = true
+			return errors.Join(err, rollbackErr)
+		}
+		done = true
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		done = true
+		return err
+	}
+	done = true
+	return nil
 }
 
 type Vault struct {

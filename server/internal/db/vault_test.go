@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -88,6 +89,34 @@ func TestEnsureVaultRejectsBlankName(t *testing.T) {
 
 	if err := q.EnsureVault(" "); err == nil {
 		t.Fatal("expected blank vault name to fail")
+	} else if !errors.Is(err, ErrInvalidVaultName) {
+		t.Fatalf("expected ErrInvalidVaultName, got %v", err)
+	}
+}
+
+func TestInTxRollsBackOnPanic(t *testing.T) {
+	q := setupTestDB(t)
+
+	func() {
+		defer func() {
+			if recovered := recover(); recovered == nil {
+				t.Fatal("expected panic")
+			}
+		}()
+		_ = q.InTx(func(txq *Queries) error {
+			if err := txq.EnsureVault("panic-rolled-back"); err != nil {
+				return err
+			}
+			panic("stop")
+		})
+	}()
+
+	exists, err := q.VaultExists("panic-rolled-back")
+	if err != nil {
+		t.Fatalf("vault exists: %v", err)
+	}
+	if exists {
+		t.Fatal("expected transaction rollback after panic to remove vault")
 	}
 }
 

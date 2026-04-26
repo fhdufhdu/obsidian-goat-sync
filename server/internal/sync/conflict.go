@@ -89,11 +89,11 @@ func CheckFileUpdate(serverFile db.File, serverExists bool, baseVersion int64, l
 	if !serverExists || serverFile.IsDeleted {
 		return OptimisticResult{OK: false, ErrNoRows: true}
 	}
-	if baseVersion != serverFile.Version {
-		return OptimisticResult{OK: false}
-	}
 	if localHash == serverFile.Hash {
 		return OptimisticResult{OK: true, Noop: true}
+	}
+	if baseVersion != serverFile.Version {
+		return OptimisticResult{OK: false}
 	}
 	return OptimisticResult{OK: true}
 }

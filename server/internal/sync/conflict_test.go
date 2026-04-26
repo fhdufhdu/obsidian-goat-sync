@@ -158,6 +158,14 @@ func TestCheckFileUpdate_SameVersion_SameHash_Noop(t *testing.T) {
 	}
 }
 
+func TestCheckFileUpdate_DiffVersionSameHash_Noop(t *testing.T) {
+	sf := makeServerFile(6, "samehash", false)
+	result := CheckFileUpdate(sf, true, 5, "samehash")
+	if !result.OK || !result.Noop {
+		t.Errorf("expected OK=true, Noop=true for idempotent retry, got OK=%v Noop=%v", result.OK, result.Noop)
+	}
+}
+
 func TestCheckFileUpdate_DiffVersion_Conflict(t *testing.T) {
 	sf := makeServerFile(7, "hash7", false)
 	result := CheckFileUpdate(sf, true, 5, "clienthash")

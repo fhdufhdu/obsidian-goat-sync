@@ -142,7 +142,10 @@ func (h *Handler) handleVaultCreate(sender messageSender, msg IncomingMessage) {
 		sender.SendMessage(OutgoingMessage{Type: "error", Vault: msg.Vault, Error: err.Error()})
 		return
 	}
-	h.storage.CreateVaultDir(msg.Vault)
+	if err := h.storage.CreateVaultDir(msg.Vault); err != nil {
+		sender.SendMessage(OutgoingMessage{Type: "error", Vault: msg.Vault, Error: err.Error()})
+		return
+	}
 	sender.SendMessage(OutgoingMessage{Type: "vault_created", Vault: msg.Vault})
 }
 

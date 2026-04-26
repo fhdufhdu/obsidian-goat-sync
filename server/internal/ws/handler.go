@@ -61,14 +61,18 @@ func (h *Handler) HandleMessage(client *Client, data []byte) {
 		log.Printf("unknown message type: %s", msg.Type)
 		return
 	}
+	if !isKnownMessageType(msg.Type) {
+		log.Printf("unknown message type: %s", msg.Type)
+		return
+	}
 
 	var recorder responseRecorder
 	var finalizers []func() error
 	var rollbacks []func() error
 
-	sender := messageSender(client)
-	if sender == nil {
-		sender = &recorder
+	var sender messageSender = &recorder
+	if client != nil {
+		sender = client
 	}
 
 	err = h.queries.InTx(func(txq *db.Queries) error {
@@ -115,6 +119,15 @@ func (h *Handler) HandleMessage(client *Client, data []byte) {
 	}
 	for _, out := range recorder.messages {
 		sender.SendMessage(out)
+	}
+}
+
+func isKnownMessageType(messageType string) bool {
+	switch messageType {
+	case "vaultCreate", "syncInit", "fileCheck", "filePut", "fileDelete", "conflictResolve":
+		return true
+	default:
+		return false
 	}
 }
 

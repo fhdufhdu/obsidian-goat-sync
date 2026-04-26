@@ -406,6 +406,41 @@ func TestHandleSyncInit_ServerOnlyFile_ToDownload(t *testing.T) {
 	}
 }
 
+func TestHandleMessageNilClientDoesNotPanic(t *testing.T) {
+	h, _, _, _ := setupHandler(t)
+
+	h.HandleMessage(nil, mustJSON(IncomingMessage{
+		Type:  "filePut",
+		Vault: "",
+		Path:  "notes/bad.md",
+		File: &FilePayload{
+			Path:      "notes/bad.md",
+			Exists:    true,
+			LocalHash: "hash-bad",
+		},
+	}))
+}
+
+func TestHandleUnknownMessageDoesNotCreateVault(t *testing.T) {
+	h, q, _, _ := setupHandler(t)
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	h.HandleMessage(c, mustJSON(IncomingMessage{
+		Type:  "unknownType",
+		Vault: "personal",
+		Path:  "notes/a.md",
+	}))
+
+	exists, err := q.VaultExists("personal")
+	if err != nil {
+		t.Fatalf("vault exists: %v", err)
+	}
+	if exists {
+		t.Fatal("expected unknown message not to create vault")
+	}
+}
+
 func TestHandleFileCheck_UpToDate(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")

@@ -63,3 +63,56 @@ func TestDeleteVault(t *testing.T) {
 		t.Fatalf("expected 0 vaults, got %d", len(vaults))
 	}
 }
+
+func TestEnsureVaultCreatesAndIgnoresExisting(t *testing.T) {
+	q := setupTestDB(t)
+
+	if err := q.EnsureVault("personal"); err != nil {
+		t.Fatalf("ensure first vault: %v", err)
+	}
+	if err := q.EnsureVault("personal"); err != nil {
+		t.Fatalf("ensure existing vault: %v", err)
+	}
+
+	vaults, err := q.ListVaults()
+	if err != nil {
+		t.Fatalf("list vaults: %v", err)
+	}
+	if len(vaults) != 1 || vaults[0].Name != "personal" {
+		t.Fatalf("expected one personal vault, got %#v", vaults)
+	}
+}
+
+func TestEnsureVaultRejectsBlankName(t *testing.T) {
+	q := setupTestDB(t)
+
+	if err := q.EnsureVault(" "); err == nil {
+		t.Fatal("expected blank vault name to fail")
+	}
+}
+
+func TestInTxRollsBackOnError(t *testing.T) {
+	q := setupTestDB(t)
+
+	err := q.InTx(func(txq *Queries) error {
+		if err := txq.EnsureVault("rolled-back"); err != nil {
+			return err
+		}
+		return assertErr("stop")
+	})
+	if err == nil {
+		t.Fatal("expected transaction error")
+	}
+
+	exists, err := q.VaultExists("rolled-back")
+	if err != nil {
+		t.Fatalf("vault exists: %v", err)
+	}
+	if exists {
+		t.Fatal("expected transaction rollback to remove vault")
+	}
+}
+
+type assertErr string
+
+func (e assertErr) Error() string { return string(e) }

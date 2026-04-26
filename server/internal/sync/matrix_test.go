@@ -87,7 +87,7 @@ func TestDecideSyncInitBaseAwareActiveDiverged(t *testing.T) {
 			in: DecisionInput{
 				Message:       MessageSyncInit,
 				ClientExists:  true,
-				BaseVersion:   int64Ptr(1),
+				BaseVersion:   ptr64(1),
 				LocalHash:     "base",
 				ServerState:   ServerActive,
 				ServerVersion: 2,
@@ -102,7 +102,7 @@ func TestDecideSyncInitBaseAwareActiveDiverged(t *testing.T) {
 			in: DecisionInput{
 				Message:       MessageSyncInit,
 				ClientExists:  true,
-				BaseVersion:   int64Ptr(1),
+				BaseVersion:   ptr64(1),
 				LocalHash:     "local",
 				ServerState:   ServerActive,
 				ServerVersion: 2,
@@ -118,7 +118,7 @@ func TestDecideSyncInitBaseAwareActiveDiverged(t *testing.T) {
 			in: DecisionInput{
 				Message:       MessageSyncInit,
 				ClientExists:  true,
-				BaseVersion:   int64Ptr(1),
+				BaseVersion:   ptr64(1),
 				LocalHash:     "local",
 				ServerState:   ServerActive,
 				ServerVersion: 2,

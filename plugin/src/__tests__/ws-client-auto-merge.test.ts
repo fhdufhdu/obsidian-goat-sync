@@ -1,3 +1,4 @@
+import { expect, test } from "vitest";
 import { buildMergePutMessage } from "../ws-client";
 
 test("buildMergePutMessage includes expectedServerVersion", () => {

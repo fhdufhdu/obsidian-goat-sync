@@ -42,6 +42,8 @@ func (rollbackResponseError) Error() string {
 	return "rollback after websocket error response"
 }
 
+var errServerAdvanced = errors.New("server advanced during merge")
+
 func NewHandler(q *db.Queries, s *storage.Storage, hub *Hub) *Handler {
 	return &Handler{queries: q, storage: s, hub: hub}
 }
@@ -170,7 +172,71 @@ func (h *Handler) dispatchMessage(sender messageSender, client *Client, msg Inco
 }
 
 func (h *Handler) handleMergePut(sender messageSender, msg IncomingMessage, finalizers *[]func() error, rollbacks *[]func() error) {
-	sender.SendMessage(OutgoingMessage{Type: "mergePutResult", Path: msg.Path, Action: string(syncpkg.MatrixActionConflict), Error: "mergePut handler registered before merge behavior"})
+	if msg.File == nil {
+		sender.SendMessage(OutgoingMessage{Type: "mergePutResult", Path: msg.Path, Error: "missing file payload"})
+		return
+	}
+	if msg.File.BaseVersion == nil {
+		sender.SendMessage(OutgoingMessage{Type: "mergePutResult", Path: msg.Path, Error: "missing file.baseVersion"})
+		return
+	}
+	if msg.ExpectedServerVersion == nil {
+		sender.SendMessage(OutgoingMessage{Type: "mergePutResult", Path: msg.Path, Error: "missing expectedServerVersion"})
+		return
+	}
+	if msg.File.LocalHash == "" {
+		sender.SendMessage(OutgoingMessage{Type: "mergePutResult", Path: msg.Path, Error: "missing file.localHash"})
+		return
+	}
+
+	path := msg.File.Path
+	if path == "" {
+		path = msg.Path
+	}
+
+	sf, err := h.queries.GetFile(msg.Vault, path)
+	if err != nil {
+		sender.SendMessage(OutgoingMessage{Type: "mergePutResult", Path: path, Error: err.Error()})
+		return
+	}
+	base, err := h.queries.GetFileVersion(msg.Vault, path, *msg.File.BaseVersion)
+	if err != nil {
+		sender.SendMessage(OutgoingMessage{Type: "mergePutResult", Path: path, Error: err.Error()})
+		return
+	}
+
+	if sf.Version > *msg.ExpectedServerVersion {
+		sender.SendMessage(OutgoingMessage{Type: "mergePutResult", Path: path, Action: "autoMergeRequired", Meta: serverMeta(sf)})
+		return
+	}
+	if sf.Version < *msg.ExpectedServerVersion {
+		h.sendConflictResult(sender, "mergePutResult", msg.Vault, path, syncpkg.MatrixActionConflict, sf)
+		return
+	}
+
+	localContent := decodeContent(msg.Content, msg.Encoding)
+	mergedFile, merged, ok, err := h.tryAutoMerge(msg.Vault, path, base, sf, localContent, msg.File.LocalHash, msg.Encoding, finalizers, rollbacks)
+	if err != nil {
+		if errors.Is(err, errServerAdvanced) {
+			sender.SendMessage(OutgoingMessage{Type: "mergePutResult", Path: path, Action: "autoMergeRequired", Meta: serverMeta(mergedFile)})
+			return
+		}
+		sender.SendMessage(OutgoingMessage{Type: "mergePutResult", Path: path, Error: err.Error()})
+		return
+	}
+	if !ok {
+		h.sendConflictResult(sender, "mergePutResult", msg.Vault, path, syncpkg.MatrixActionConflict, sf)
+		return
+	}
+
+	sender.SendMessage(OutgoingMessage{
+		Type:     "mergePutResult",
+		Path:     path,
+		Action:   string(syncpkg.MatrixActionToDownload),
+		Content:  merged,
+		Encoding: mergedFile.Encoding,
+		Meta:     serverMeta(mergedFile),
+	})
 }
 
 func (h *Handler) handleVaultCreate(sender messageSender, msg IncomingMessage) {
@@ -504,16 +570,35 @@ func (h *Handler) tryAutoMerge(vault, path string, base, latest db.File, localCo
 		return db.File{}, "", false, nil
 	}
 	mergedBytes := []byte(merged)
-	mergedHash := hashBytes(mergedBytes)
-	contentRef, err := h.stageContent(vault, path, mergedBytes, finalizers, rollbacks)
+	newFile, merged, err := h.saveMergedVersion(vault, path, latest.Version, mergedBytes, finalizers, rollbacks)
 	if err != nil {
-		return db.File{}, "", false, err
+		return newFile, "", false, err
+	}
+	return newFile, merged, true, nil
+}
+
+func (h *Handler) saveMergedVersion(vault, path string, expectedLatest int64, merged []byte, finalizers, rollbacks *[]func() error) (db.File, string, error) {
+	latest, err := h.queries.GetFile(vault, path)
+	if err != nil {
+		return db.File{}, "", err
+	}
+	if latest.Version != expectedLatest {
+		return latest, "", errServerAdvanced
+	}
+	mergedHash := hashBytes(merged)
+	contentRef, err := h.stageContent(vault, path, merged, finalizers, rollbacks)
+	if err != nil {
+		return db.File{}, "", err
 	}
 	newFile, err := h.queries.UpdateFile(vault, path, mergedHash, contentRef, "")
 	if err != nil {
-		return db.File{}, "", false, err
+		latestAfter, latestErr := h.queries.GetFile(vault, path)
+		if latestErr == nil && latestAfter.Version > expectedLatest {
+			return latestAfter, "", errServerAdvanced
+		}
+		return db.File{}, "", err
 	}
-	return newFile, merged, true, nil
+	return newFile, string(merged), nil
 }
 
 func (h *Handler) handleFilePut(sender messageSender, msg IncomingMessage, finalizers *[]func() error, rollbacks *[]func() error) {

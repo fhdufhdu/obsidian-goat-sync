@@ -182,6 +182,53 @@ func TestHandleMessageAcceptsMergePutType(t *testing.T) {
 	}
 }
 
+func TestMergePutSuccessReturnsToDownload(t *testing.T) {
+	h, _, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nserver\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:                  "mergePut",
+		Vault:                 "personal",
+		Path:                  "notes/a.md",
+		Content:               "local\nb\n",
+		ExpectedServerVersion: int64Ptr(2),
+		File:                  &FilePayload{Path: "notes/a.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: hashString("a\nb\n"), LocalHash: hashString("local\nb\n")},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Type != "mergePutResult" || msg.Action != "toDownload" || msg.Content != "local\nserver\n" {
+		t.Fatalf("mergePutResult = %#v", msg)
+	}
+}
+
+func TestMergePutLatestGreaterThanExpectedReturnsAutoMergeRequired(t *testing.T) {
+	h, _, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "base", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "server2", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "server3", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:                  "mergePut",
+		Vault:                 "personal",
+		Path:                  "notes/a.md",
+		Content:               "local",
+		ExpectedServerVersion: int64Ptr(2),
+		File:                  &FilePayload{Path: "notes/a.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: hashString("base"), LocalHash: hashString("local")},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Type != "mergePutResult" || msg.Action != "autoMergeRequired" || msg.Meta == nil || msg.Meta.ServerVersion != 3 {
+		t.Fatalf("mergePutResult = %#v", msg)
+	}
+}
+
 func TestHandleVaultCreate(t *testing.T) {
 	h, q, _, _ := setupHandler(t)
 	c := makeClient(h.hub, "")

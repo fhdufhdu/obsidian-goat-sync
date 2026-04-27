@@ -191,7 +191,7 @@ func TestHandleSyncInit_WithPrev_SameVersion_DiffHash_ToUpdate(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "hash1", "sha256:hash1", "")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -220,7 +220,7 @@ func TestHandleSyncInit_Tombstone_ToDelete(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/old.md", []byte("old content"))
-	q.CreateFile("personal", "notes/old.md", "hash1", "sha256:hash1", "")
+	q.CreateFile("personal", "notes/old.md", "hash1", "", "")
 	q.DeleteFile("personal", "notes/old.md")
 
 	c := makeClient(h.hub, "personal")
@@ -468,11 +468,26 @@ func TestFilePutStoresHistoricalObjectRefs(t *testing.T) {
 	}
 }
 
+func TestReadFileContentDoesNotFallbackWhenContentRefMissing(t *testing.T) {
+	h, _, s, _ := setupHandlerTest(t)
+	if err := s.WriteFile("personal", "notes/history.md", []byte("latest")); err != nil {
+		t.Fatalf("write latest file: %v", err)
+	}
+
+	content, err := h.readFileContent("personal", db.File{
+		Path:       "notes/history.md",
+		ContentRef: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	})
+	if err == nil {
+		t.Fatalf("expected missing object error, got content %q", content)
+	}
+}
+
 func TestHandleSyncInit_NoPrev_ActiveSameHash(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "serverhash", "sha256:serverhash", "")
+	q.CreateFile("personal", "notes/hello.md", "serverhash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -498,7 +513,7 @@ func TestHandleSyncInit_NoPrev_ActiveDiffHash(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("server content"))
-	q.CreateFile("personal", "notes/hello.md", "serverhash", "sha256:serverhash", "")
+	q.CreateFile("personal", "notes/hello.md", "serverhash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -521,7 +536,7 @@ func TestHandleSyncInit_WithPrev_SameVersion_SameHash_Skip(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "hash1", "sha256:hash1", "")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -544,8 +559,8 @@ func TestHandleSyncInit_WithPrev_OlderVersion_SameClientHash_ToUpdateMeta(t *tes
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "hash1", "sha256:hash1", "")
-	q.UpdateFile("personal", "notes/hello.md", "hash2", "sha256:hash2", "")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
+	q.UpdateFile("personal", "notes/hello.md", "hash2", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -568,8 +583,8 @@ func TestHandleSyncInit_WithPrev_OlderVersion_PrevHashEqClient_ToDownload(t *tes
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("server content"))
-	q.CreateFile("personal", "notes/hello.md", "hash1", "sha256:hash1", "")
-	q.UpdateFile("personal", "notes/hello.md", "hash2", "sha256:hash2", "")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
+	q.UpdateFile("personal", "notes/hello.md", "hash2", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -592,7 +607,7 @@ func TestHandleSyncInit_ServerOnlyFile_ToDownload(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/server-only.md", []byte("server content"))
-	q.CreateFile("personal", "notes/server-only.md", "serverhash", "sha256:serverhash", "")
+	q.CreateFile("personal", "notes/server-only.md", "serverhash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -648,7 +663,7 @@ func TestHandleFileCheck_UpToDate(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "samehash", "sha256:samehash", "")
+	q.CreateFile("personal", "notes/hello.md", "samehash", "", "")
 	base := int64(1)
 
 	c := makeClient(h.hub, "personal")
@@ -676,7 +691,7 @@ func TestHandleFileCheck_UpdateMeta(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	sf, err := q.CreateFile("personal", "notes/hello.md", "hash1", "sha256:hash1", "")
+	sf, err := q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
 	if err != nil {
 		t.Fatalf("create file: %v", err)
 	}
@@ -710,11 +725,11 @@ func TestHandleFileCheck_Put(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	sf, err := q.CreateFile("personal", "notes/hello.md", "oldhash", "sha256:oldhash", "")
+	sf, err := q.CreateFile("personal", "notes/hello.md", "oldhash", "", "")
 	if err != nil {
 		t.Fatalf("create file: %v", err)
 	}
-	sf, err = q.UpdateFile("personal", "notes/hello.md", "newhash", "sha256:newhash", "")
+	sf, err = q.UpdateFile("personal", "notes/hello.md", "newhash", "", "")
 	if err != nil {
 		t.Fatalf("update file: %v", err)
 	}
@@ -750,7 +765,7 @@ func TestHandleFileCheck_ToDeleteLocal(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/old.md", []byte("content"))
-	q.CreateFile("personal", "notes/old.md", "hash1", "sha256:hash1", "")
+	q.CreateFile("personal", "notes/old.md", "hash1", "", "")
 	q.DeleteFile("personal", "notes/old.md")
 
 	c := makeClient(h.hub, "personal")
@@ -780,7 +795,7 @@ func TestHandleFileCheck_Conflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/conflict.md", []byte("server"))
-	q.CreateFile("personal", "notes/conflict.md", "hash1", "sha256:hash1", "")
+	q.CreateFile("personal", "notes/conflict.md", "hash1", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -809,7 +824,7 @@ func TestHandleFileCheck_DeleteConflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/tomb.md", []byte("stale"))
-	q.CreateFile("personal", "notes/tomb.md", "serverhash", "sha256:serverhash", "")
+	q.CreateFile("personal", "notes/tomb.md", "serverhash", "", "")
 	q.DeleteFile("personal", "notes/tomb.md")
 	base := int64(1)
 
@@ -875,7 +890,7 @@ func TestHandleFileCreate_ActiveConflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/existing.md", []byte("original"))
-	q.CreateFile("personal", "notes/existing.md", "originalhash", "sha256:originalhash", "")
+	q.CreateFile("personal", "notes/existing.md", "originalhash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -907,7 +922,7 @@ func TestHandleFileCreate_TombstoneReuse(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/old.md", []byte("old"))
-	q.CreateFile("personal", "notes/old.md", "oldhash", "sha256:oldhash", "")
+	q.CreateFile("personal", "notes/old.md", "oldhash", "", "")
 	q.DeleteFile("personal", "notes/old.md")
 
 	c := makeClient(h.hub, "personal")
@@ -964,7 +979,7 @@ func TestHandleFilePut_NewFile_OKUpdateMeta(t *testing.T) {
 func TestHandleFileDelete_TombstoneRetry_OKUpdateMeta(t *testing.T) {
 	h, q, _, _ := setupHandler(t)
 	q.CreateVault("personal")
-	q.CreateFile("personal", "notes/a.md", "hash-a", "sha256:hash-a", "")
+	q.CreateFile("personal", "notes/a.md", "hash-a", "", "")
 	deleted, err := q.DeleteFile("personal", "notes/a.md")
 	if err != nil {
 		t.Fatalf("delete setup: %v", err)
@@ -998,7 +1013,7 @@ func TestHandleFileUpdate_Success(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("old"))
-	q.CreateFile("personal", "notes/hello.md", "oldhash", "sha256:oldhash", "")
+	q.CreateFile("personal", "notes/hello.md", "oldhash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -1034,7 +1049,7 @@ func TestHandleFileUpdate_Noop(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "samehash", "sha256:samehash", "")
+	q.CreateFile("personal", "notes/hello.md", "samehash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -1064,8 +1079,8 @@ func TestHandleFileUpdate_Conflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("server version"))
-	q.CreateFile("personal", "notes/hello.md", "hash1", "sha256:hash1", "")
-	q.UpdateFile("personal", "notes/hello.md", "hash2", "sha256:hash2", "")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
+	q.UpdateFile("personal", "notes/hello.md", "hash2", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -1098,7 +1113,7 @@ func TestHandleFileDelete_Success(t *testing.T) {
 	h, q, s, dir := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/old.md", []byte("delete me"))
-	q.CreateFile("personal", "notes/old.md", "hash1", "sha256:hash1", "")
+	q.CreateFile("personal", "notes/old.md", "hash1", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -1136,8 +1151,8 @@ func TestHandleFileDelete_Conflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("updated on server"))
-	q.CreateFile("personal", "notes/hello.md", "hash1", "sha256:hash1", "")
-	q.UpdateFile("personal", "notes/hello.md", "hash2", "sha256:hash2", "")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
+	q.UpdateFile("personal", "notes/hello.md", "hash2", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -1190,7 +1205,7 @@ func TestHandleConflictResolve_LocalUpdate_Success(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("server content"))
-	q.CreateFile("personal", "notes/hello.md", "serverhash", "sha256:serverhash", "")
+	q.CreateFile("personal", "notes/hello.md", "serverhash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -1220,8 +1235,8 @@ func TestHandleConflictResolve_LocalUpdate_Success(t *testing.T) {
 func TestHandleConflictResolve_LocalUpdate_IdempotentRetryRewritesFile(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
-	q.CreateFile("personal", "notes/hello.md", "serverhash", "sha256:serverhash", "")
-	updated, err := q.UpdateFile("personal", "notes/hello.md", "localhash", "sha256:localhash", "")
+	q.CreateFile("personal", "notes/hello.md", "serverhash", "", "")
+	updated, err := q.UpdateFile("personal", "notes/hello.md", "localhash", "", "")
 	if err != nil {
 		t.Fatalf("update setup: %v", err)
 	}
@@ -1264,8 +1279,8 @@ func TestHandleConflictResolve_LocalUpdate_Reconflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("newer server"))
-	q.CreateFile("personal", "notes/hello.md", "hash1", "sha256:hash1", "")
-	q.UpdateFile("personal", "notes/hello.md", "hash2", "sha256:hash2", "")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
+	q.UpdateFile("personal", "notes/hello.md", "hash2", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -1295,7 +1310,7 @@ func TestHandleConflictResolve_LocalDelete_Success(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/old.md", []byte("content"))
-	q.CreateFile("personal", "notes/old.md", "hash1", "sha256:hash1", "")
+	q.CreateFile("personal", "notes/old.md", "hash1", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c

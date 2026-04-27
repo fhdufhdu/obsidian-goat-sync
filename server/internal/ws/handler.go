@@ -763,10 +763,7 @@ func (h *Handler) stageContent(vault, path string, data []byte, finalizers *[]fu
 
 func (h *Handler) readFileContent(vault string, f db.File) ([]byte, error) {
 	if f.ContentRef != "" {
-		content, err := h.storage.ReadObject(f.ContentRef)
-		if err == nil {
-			return content, nil
-		}
+		return h.storage.ReadObject(f.ContentRef)
 	}
 	return h.storage.ReadFile(vault, f.Path)
 }

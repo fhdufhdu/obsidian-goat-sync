@@ -116,6 +116,9 @@ func normalizeTextEdits(edits []textEdit) ([]textEdit, bool) {
 			}
 			continue
 		}
+		if insertBoundaryConflict(last, edit) {
+			return nil, false
+		}
 		if last.end > edit.start {
 			return nil, false
 		}
@@ -124,4 +127,26 @@ func normalizeTextEdits(edits []textEdit) ([]textEdit, bool) {
 	}
 
 	return normalized, true
+}
+
+func insertBoundaryConflict(a, b textEdit) bool {
+	if !a.insertOnly() && !b.insertOnly() {
+		return false
+	}
+	if a.insertOnly() && b.insertOnly() {
+		return false
+	}
+
+	insert := a
+	span := b
+	if b.insertOnly() {
+		insert = b
+		span = a
+	}
+
+	return insert.start == span.start || insert.start == span.end
+}
+
+func (edit textEdit) insertOnly() bool {
+	return edit.start == edit.end
 }

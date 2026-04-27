@@ -34,6 +34,15 @@ func TestMergeTextSameInsertConflict(t *testing.T) {
 	}
 }
 
+func TestMergeTextInsertAtDeletedAnchorConflict(t *testing.T) {
+	base := "ab"
+	local := "aXb"
+	server := "a"
+	if got, ok := MergeText(base, local, server); ok {
+		t.Fatalf("expected conflict, got %q", got)
+	}
+}
+
 func TestMergeTextIdenticalChange(t *testing.T) {
 	base := "a\nb\n"
 	local := "a\nB\n"

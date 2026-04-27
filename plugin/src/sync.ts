@@ -658,7 +658,17 @@ export class SyncManager {
 
     const entry = this.dirtyQueue.get(msg.path);
     const hasNewerLocalEdit = !!entry && entry.lastSeenHash !== sentHash;
-    if (!hasNewerLocalEdit) {
+    const queuedDelete = this.deleteQueue.get(msg.path);
+    if (queuedDelete) {
+      this.fileMeta.set(msg.path, {
+        prevServerVersion: msg.meta.serverVersion,
+        prevServerHash: msg.meta.serverHash || "",
+      });
+      await this.deleteQueue.rebase(msg.path, {
+        baseVersion: msg.meta.serverVersion,
+        serverHash: msg.meta.serverHash || "",
+      });
+    } else if (!hasNewerLocalEdit) {
       await this.applyDownloadEntry({
         path: msg.path,
         content: msg.content,

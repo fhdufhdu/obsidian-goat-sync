@@ -7,4 +7,4 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.42
 )
 
-require github.com/sergi/go-diff v1.4.0 // indirect
+require github.com/sergi/go-diff v1.4.0

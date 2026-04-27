@@ -586,18 +586,32 @@ func (h *Handler) saveMergedVersion(vault, path string, expectedLatest int64, me
 		return latest, "", errServerAdvanced
 	}
 	mergedHash := hashBytes(merged)
-	contentRef, err := h.stageContent(vault, path, merged, finalizers, rollbacks)
+
+	contentRef, objectStage, err := h.storage.StageObjectWrite(merged)
 	if err != nil {
 		return db.File{}, "", err
 	}
-	newFile, err := h.queries.UpdateFile(vault, path, mergedHash, contentRef, "")
+	if err := objectStage.Commit(); err != nil {
+		_ = objectStage.Rollback()
+		return db.File{}, "", err
+	}
+
+	newFile, err := h.queries.UpdateFileIfLatestVersion(vault, path, expectedLatest, mergedHash, contentRef, "")
 	if err != nil {
 		latestAfter, latestErr := h.queries.GetFile(vault, path)
-		if latestErr == nil && latestAfter.Version > expectedLatest {
+		if latestErr == nil && (latestAfter.Version > expectedLatest || errors.Is(err, db.ErrFileVersionMismatch)) {
 			return latestAfter, "", errServerAdvanced
 		}
 		return db.File{}, "", err
 	}
+
+	latestStage, err := h.storage.StageWrite(vault, path, merged)
+	if err != nil {
+		return db.File{}, "", err
+	}
+	*finalizers = append(*finalizers, latestStage.Commit)
+	*rollbacks = append(*rollbacks, latestStage.Rollback)
+
 	return newFile, string(merged), nil
 }
 

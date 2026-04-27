@@ -43,6 +43,31 @@ func TestUpdateFile(t *testing.T) {
 	}
 }
 
+func TestUpdateFileIfLatestVersionRejectsStaleExpectedVersion(t *testing.T) {
+	q := setupTestDB(t)
+	q.CreateVault("personal")
+	q.CreateFile("personal", "notes/hello.md", "abc123", "sha256:abc123", "")
+	latest, err := q.UpdateFile("personal", "notes/hello.md", "def456", "sha256:def456", "")
+	if err != nil {
+		t.Fatalf("advance file: %v", err)
+	}
+
+	if _, err := q.UpdateFileIfLatestVersion("personal", "notes/hello.md", latest.Version-1, "merged", "sha256:merged", ""); err != ErrFileVersionMismatch {
+		t.Fatalf("expected ErrFileVersionMismatch, got %v", err)
+	}
+
+	after, err := q.GetFile("personal", "notes/hello.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Version != latest.Version || after.Hash != latest.Hash {
+		t.Fatalf("unexpected append after stale guarded update: %#v", after)
+	}
+	if _, err := q.GetFileVersion("personal", "notes/hello.md", latest.Version+1); err != sql.ErrNoRows {
+		t.Fatalf("expected no appended version, got err=%v", err)
+	}
+}
+
 func TestUpdateFileConcurrentAppendsAllocateVersions(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")

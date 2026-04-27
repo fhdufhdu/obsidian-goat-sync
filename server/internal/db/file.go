@@ -114,6 +114,45 @@ func (q *Queries) UpdateFile(vaultName, path, hash, contentRef, encoding string)
 	return file, err
 }
 
+func (q *Queries) UpdateFileIfLatestVersion(vaultName, path string, expectedLatest int64, hash, contentRef, encoding string) (File, error) {
+	var file File
+	err := q.withFileVersionRetry(func() error {
+		now := time.Now().UTC().Format(time.RFC3339)
+		inserted, err := scanFile(q.db.QueryRow(`
+			INSERT INTO file_versions (vault_name, path, version, hash, content_ref, encoding, is_deleted, inserted_at, updated_at)
+			SELECT vault_name, path, version + 1, ?, ?, ?, 0, ?, ?
+			FROM file_versions
+			WHERE id = (
+				SELECT id
+				FROM file_versions
+				WHERE vault_name = ? AND path = ?
+				ORDER BY version DESC
+				LIMIT 1
+			)
+			  AND version = ?
+			RETURNING id, vault_name, path, version, hash, COALESCE(content_ref, ''), encoding, is_deleted, inserted_at, updated_at`,
+			hash, contentRef, encoding, now, now, vaultName, path, expectedLatest,
+		))
+		if err == nil {
+			file = inserted
+			return nil
+		}
+		if err != sql.ErrNoRows {
+			return err
+		}
+
+		latest, latestErr := q.GetFile(vaultName, path)
+		if latestErr != nil {
+			return latestErr
+		}
+		if latest.Version != expectedLatest {
+			return ErrFileVersionMismatch
+		}
+		return err
+	})
+	return file, err
+}
+
 func (q *Queries) DeleteFile(vaultName, path string) (File, error) {
 	var file File
 	err := q.withFileVersionRetry(func() error {

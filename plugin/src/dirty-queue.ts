@@ -60,6 +60,23 @@ export class DirtyQueue {
     });
   }
 
+  async claimNextExcluding(excludedPaths: Set<string>): Promise<DirtySnapshot | null> {
+    return await this.mutex.runExclusive(() => {
+      for (const entry of this.entries.values()) {
+        if (excludedPaths.has(entry.path)) continue;
+        if (entry.status === "pending" || entry.status === "retryableFailed") {
+          entry.status = "inFlight";
+          return {
+            path: entry.path,
+            baseVersion: entry.baseVersion,
+            lastSeenHash: entry.lastSeenHash,
+          };
+        }
+      }
+      return null;
+    });
+  }
+
   async markSentHash(path: string, claimHash: string, sentHash: string): Promise<void> {
     await this.mutex.runExclusive(() => {
       const entry = this.entries.get(path);

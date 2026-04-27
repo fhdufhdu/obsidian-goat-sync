@@ -388,9 +388,12 @@ export class SyncManager {
   }
 
   private async handleMergePutResult(msg: ServerMessage) {
-    if (this.handleServerError(msg)) return;
     if (!msg.path) return;
     try {
+      if (this.handleServerError(msg)) {
+        await this.dirtyQueue.completeRetryableFailure(msg.path);
+        return;
+      }
       if (msg.action === "toDownload" && msg.content !== undefined && msg.meta) {
         const entry = this.dirtyQueue.get(msg.path);
         const sentHash = this.mergeInFlight.get(msg.path)?.sentHash || entry?.sentHash || entry?.lastSeenHash || "";
@@ -411,6 +414,14 @@ export class SyncManager {
         return;
       }
       if ((msg.action === "conflict" || msg.action === "deleteConflict") && msg.conflict) {
+        await this.dirtyQueue.remove(msg.path);
+        this.blockedPaths.block({
+          path: msg.path,
+          reason: msg.action === "deleteConflict" ? "deleteConflict" : "conflict",
+          serverVersion: msg.conflict.serverVersion,
+          serverHash: msg.conflict.serverHash,
+          isDeleted: msg.action === "deleteConflict",
+        });
         await this.enqueueLatestConflict(msg);
       }
     } finally {
@@ -718,12 +729,8 @@ export class SyncManager {
 
   private async flushDirtyQueue(): Promise<FlushResult> {
     while (true) {
-      const next = await this.dirtyQueue.claimNext();
+      const next = await this.dirtyQueue.claimNextExcluding(new Set(this.mergeInFlight.keys()));
       if (!next) return "ok";
-      if (this.mergeInFlight.has(next.path)) {
-        await this.dirtyQueue.release(next.path);
-        return "ok";
-      }
 
       try {
         await this.putDirtyFile(next);

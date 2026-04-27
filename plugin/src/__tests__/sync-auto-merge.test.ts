@@ -155,4 +155,79 @@ describe("auto merge flow", () => {
     expect(harness.fileMeta.get("notes/a.md")).toEqual({ prevServerVersion: 3, prevServerHash: await sha256("merged") });
     expect(harness.dirtyQueue.get("notes/a.md")).toMatchObject({ baseVersion: 3, lastSeenHash: newerHash });
   });
+
+  test("mergePutResult error clears merge-in-flight and makes dirty entry retryable", async () => {
+    const localHash = await sha256("local");
+    const harness = await createSyncManagerHarness({
+      files: { "notes/a.md": "local" },
+      meta: { "notes/a.md": { prevServerVersion: 1, prevServerHash: "base" } },
+      dirty: [{ path: "notes/a.md", baseVersion: 1, lastSeenHash: localHash }],
+    });
+    await harness.dirtyQueue.markSentHash("notes/a.md", localHash, localHash);
+    harness.manager["mergeInFlight"].set("notes/a.md", { sentHash: localHash });
+    await harness.manager["handleMergePutResult"]({
+      type: "mergePutResult",
+      path: "notes/a.md",
+      error: "merge failed",
+    });
+    expect(harness.manager["mergeInFlight"].has("notes/a.md")).toBe(false);
+    expect(harness.dirtyQueue.get("notes/a.md")).toMatchObject({ status: "retryableFailed" });
+  });
+
+  test("mergePutResult conflict blocks path and removes dirty entry", async () => {
+    const localHash = await sha256("local");
+    const harness = await createSyncManagerHarness({
+      files: { "notes/a.md": "local" },
+      meta: { "notes/a.md": { prevServerVersion: 1, prevServerHash: "base" } },
+      dirty: [{ path: "notes/a.md", baseVersion: 1, lastSeenHash: localHash }],
+    });
+    harness.manager["openConflictModal"] = vi.fn();
+    harness.manager["mergeInFlight"].set("notes/a.md", { sentHash: localHash });
+    await harness.manager["handleMergePutResult"]({
+      type: "mergePutResult",
+      path: "notes/a.md",
+      action: "conflict",
+      conflict: {
+        serverVersion: 4,
+        serverHash: "server",
+        serverContent: "server content",
+        isDeleted: false,
+      },
+    });
+    expect(harness.manager["mergeInFlight"].has("notes/a.md")).toBe(false);
+    expect(harness.dirtyQueue.get("notes/a.md")).toBeUndefined();
+    expect(harness.manager["blockedPaths"].has("notes/a.md")).toBe(true);
+    expect(harness.manager["conflictQueue"].get("notes/a.md")).toMatchObject({
+      currentServerVersion: 4,
+      currentServerHash: "server",
+      kind: "modify",
+    });
+  });
+
+  test("flushDirtyQueue skips merge-in-flight entry and flushes later dirty entries", async () => {
+    const aHash = await sha256("a");
+    const bHash = await sha256("b");
+    const harness = await createSyncManagerHarness({
+      files: { "notes/a.md": "a", "notes/b.md": "b" },
+      meta: {
+        "notes/a.md": { prevServerVersion: 1, prevServerHash: "base-a" },
+        "notes/b.md": { prevServerVersion: 2, prevServerHash: "base-b" },
+      },
+      dirty: [
+        { path: "notes/a.md", baseVersion: 1, lastSeenHash: aHash },
+        { path: "notes/b.md", baseVersion: 2, lastSeenHash: bHash },
+      ],
+    });
+    harness.manager["mergeInFlight"].set("notes/a.md", { sentHash: aHash });
+    await harness.manager["flushDirtyQueue"]();
+    expect(harness.wsClient.sendFilePut).toHaveBeenCalledTimes(1);
+    expect(harness.wsClient.sendFilePut).toHaveBeenCalledWith(
+      "personal",
+      "notes/b.md",
+      "b",
+      expect.objectContaining({ path: "notes/b.md", baseVersion: 2, localHash: bHash }),
+      undefined,
+    );
+    expect(harness.dirtyQueue.get("notes/a.md")).toMatchObject({ status: "pending" });
+  });
 });

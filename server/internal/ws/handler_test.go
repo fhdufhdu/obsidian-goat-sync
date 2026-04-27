@@ -3,6 +3,7 @@ package ws
 import (
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"log"
@@ -71,6 +72,35 @@ func hashString(s string) string {
 }
 
 func int64Ptr(v int64) *int64 { return &v }
+
+func seedVersionObject(t *testing.T, h *Handler, vault, path, content, encoding string) db.File {
+	t.Helper()
+	if err := h.queries.EnsureVault(vault); err != nil {
+		t.Fatalf("ensure vault: %v", err)
+	}
+	ref, op, err := h.storage.StageObjectWrite([]byte(content))
+	if err != nil {
+		t.Fatalf("stage object: %v", err)
+	}
+	if err := op.Commit(); err != nil {
+		t.Fatalf("commit object: %v", err)
+	}
+	hash := hashString(content)
+	if _, err := h.queries.GetFile(vault, path); err == sql.ErrNoRows {
+		f, err := h.queries.CreateFile(vault, path, hash, ref, encoding)
+		if err != nil {
+			t.Fatalf("create file version: %v", err)
+		}
+		return f
+	} else if err != nil {
+		t.Fatalf("get latest file: %v", err)
+	}
+	f, err := h.queries.UpdateFile(vault, path, hash, ref, encoding)
+	if err != nil {
+		t.Fatalf("update file version: %v", err)
+	}
+	return f
+}
 
 func assertResponseMetaVersion(t *testing.T, resp OutgoingMessage, want int64) {
 	t.Helper()
@@ -504,6 +534,51 @@ func TestReadFileContentDoesNotFallbackWhenContentRefMissing(t *testing.T) {
 	}
 }
 
+func TestSyncInitDownloadsWhenLocalEqualsBaseAndServerAdvanced(t *testing.T) {
+	h, _, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "base", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "server", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:  "syncInit",
+		Vault: "personal",
+		Files: []FilePayload{{
+			Path: "notes/a.md", Exists: true,
+			BaseVersion: int64Ptr(1), BaseHash: hashString("base"), LocalHash: hashString("base"),
+		}},
+	})
+
+	msg := lastMessage(t, c)
+	if len(msg.ToDownload) != 1 || msg.ToDownload[0].Content != "server" {
+		t.Fatalf("syncResult = %#v", msg)
+	}
+	if len(msg.Conflicts) != 0 {
+		t.Fatalf("unexpected conflicts: %#v", msg.Conflicts)
+	}
+}
+
+func TestFileCheckReturnsAutoMergeRequiredForCleanTextCandidate(t *testing.T) {
+	h, _, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nB-server\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type: "fileCheck", Vault: "personal", Path: "notes/a.md",
+		File: &FilePayload{Path: "notes/a.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: hashString("a\nb\n"), LocalHash: hashString("A-local\nb\n")},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action != "autoMergeRequired" || msg.Meta == nil || msg.Meta.ServerVersion != 2 {
+		t.Fatalf("fileCheckResult = %#v", msg)
+	}
+}
+
 func TestHandleSyncInit_NoPrev_ActiveSameHash(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
@@ -619,8 +694,11 @@ func TestHandleSyncInit_WithPrev_OlderVersion_PrevHashEqClient_ToDownload(t *tes
 	}))
 
 	resp := readResponse(t, c)
-	if len(resp.Conflicts) != 1 {
-		t.Errorf("expected 1 conflict, got %v", resp.Conflicts)
+	if len(resp.ToDownload) != 1 || resp.ToDownload[0].Path != "notes/hello.md" {
+		t.Errorf("expected toDownload=[notes/hello.md], got %v", resp.ToDownload)
+	}
+	if len(resp.Conflicts) != 0 {
+		t.Errorf("expected no conflicts, got %v", resp.Conflicts)
 	}
 }
 

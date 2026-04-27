@@ -203,6 +203,7 @@ func (h *Handler) handleSyncInit(sender messageSender, client *Client, msg Incom
 	var toPut []string
 	var toDeleteLocal []ServerMetaPayload
 	var toRemoveMeta []ServerMetaPayload
+	var toAutoMerge []AutoMergeEntry
 	var conflicts []SyncConflictEntry
 
 	for _, cf := range msg.Files {
@@ -231,6 +232,16 @@ func (h *Handler) handleSyncInit(sender messageSender, client *Client, msg Incom
 				meta = &ServerMetaPayload{Path: cf.Path}
 			}
 			toRemoveMeta = append(toRemoveMeta, *meta)
+		case syncpkg.MatrixActionAutoMerge:
+			toAutoMerge = append(toAutoMerge, AutoMergeEntry{
+				Path:          cf.Path,
+				BaseVersion:   *cf.BaseVersion,
+				BaseHash:      cf.BaseHash,
+				LocalHash:     cf.LocalHash,
+				ServerVersion: sf.Version,
+				ServerHash:    sf.Hash,
+				Encoding:      sf.Encoding,
+			})
 		case syncpkg.MatrixActionConflict, syncpkg.MatrixActionDeleteConflict:
 			conflict, ok := h.makeSyncInitConflict(msg.Vault, cf, sf)
 			if ok {
@@ -256,6 +267,7 @@ func (h *Handler) handleSyncInit(sender messageSender, client *Client, msg Incom
 		ToPut:         toPut,
 		ToDeleteLocal: toDeleteLocal,
 		ToRemoveMeta:  toRemoveMeta,
+		ToAutoMerge:   toAutoMerge,
 		Conflicts:     conflicts,
 	})
 }
@@ -334,6 +346,9 @@ func (h *Handler) handleFileCheck(sender messageSender, msg IncomingMessage) {
 		resp.Action = string(syncpkg.MatrixActionUpToDate)
 	case syncpkg.MatrixActionToRemoveMeta:
 		resp.Action = string(syncpkg.MatrixActionToRemoveMeta)
+	case syncpkg.MatrixActionAutoMerge:
+		resp.Action = "autoMergeRequired"
+		resp.Meta = serverMeta(sf)
 	default:
 		resp.Action = string(syncpkg.MatrixActionUpToDate)
 	}
@@ -385,6 +400,16 @@ func (h *Handler) decisionInputForPath(msg IncomingMessage, payload FilePayload,
 		deletedFrom = sf.DeletedFromVersion()
 	}
 
+	var base db.File
+	baseExists := false
+	if payload.BaseVersion != nil {
+		base, err = h.queries.GetFileVersion(msg.Vault, path, *payload.BaseVersion)
+		if err != nil && err != sql.ErrNoRows {
+			return syncpkg.DecisionInput{}, db.File{}, false, err
+		}
+		baseExists = err == nil
+	}
+
 	return syncpkg.DecisionInput{
 		Message:            message,
 		ClientExists:       payload.Exists,
@@ -394,7 +419,20 @@ func (h *Handler) decisionInputForPath(msg IncomingMessage, payload FilePayload,
 		ServerVersion:      sf.Version,
 		ServerHash:         sf.Hash,
 		DeletedFromVersion: deletedFrom,
+		BaseRowExists:      baseExists,
+		BaseHash:           base.Hash,
+		AutoMerge:          h.autoMergeState(msg.Vault, path, payload, sf, base, baseExists),
 	}, sf, serverExists, nil
+}
+
+func (h *Handler) autoMergeState(_ string, _ string, payload FilePayload, sf, base db.File, baseExists bool) syncpkg.AutoMergeState {
+	if !baseExists || payload.LocalHash == "" || payload.LocalHash == base.Hash {
+		return syncpkg.AutoMergeNotApplicable
+	}
+	if sf.ContentRef != "" && base.ContentRef != "" && sf.Encoding != "base64" && base.Encoding != "base64" {
+		return syncpkg.AutoMergePossible
+	}
+	return syncpkg.AutoMergeImpossible
 }
 
 func serverMeta(f db.File) *ServerMetaPayload {

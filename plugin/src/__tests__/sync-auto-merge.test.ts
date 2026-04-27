@@ -174,6 +174,36 @@ describe("auto merge flow", () => {
     expect(harness.dirtyQueue.get("notes/a.md")).toMatchObject({ status: "retryableFailed" });
   });
 
+  test("mergePutResult error requeues auto-merge when no dirty entry exists", async () => {
+    const localHash = await sha256("local");
+    const harness = await createSyncManagerHarness({
+      files: { "notes/a.md": "local" },
+      meta: { "notes/a.md": { prevServerVersion: 1, prevServerHash: "base" } },
+    });
+    await harness.manager["handleSyncResult"]({
+      type: "syncResult",
+      toAutoMerge: [{
+        path: "notes/a.md",
+        baseVersion: 1,
+        baseHash: "base",
+        localHash: "stale-local",
+        serverVersion: 2,
+        serverHash: "server",
+      }],
+    });
+    await harness.manager["handleMergePutResult"]({
+      type: "mergePutResult",
+      path: "notes/a.md",
+      error: "merge failed",
+    });
+    expect(harness.manager["mergeInFlight"].has("notes/a.md")).toBe(false);
+    expect(harness.dirtyQueue.get("notes/a.md")).toMatchObject({
+      baseVersion: 1,
+      lastSeenHash: localHash,
+      status: "pending",
+    });
+  });
+
   test("mergePutResult conflict blocks path and removes dirty entry", async () => {
     const localHash = await sha256("local");
     const harness = await createSyncManagerHarness({

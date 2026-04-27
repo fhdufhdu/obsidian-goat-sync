@@ -64,7 +64,7 @@ export class SyncManager {
   private blockedPaths: BlockedPaths;
   private selfWriteSuppress: SelfWriteSuppress;
   private orchestrator: SyncOrchestrator;
-  private mergeInFlight = new Map<string, { sentHash: string }>();
+  private mergeInFlight = new Map<string, { sentHash: string; baseVersion?: number }>();
 
   constructor(
     app: App,
@@ -391,7 +391,19 @@ export class SyncManager {
     if (!msg.path) return;
     try {
       if (this.handleServerError(msg)) {
-        await this.dirtyQueue.completeRetryableFailure(msg.path);
+        const entry = this.dirtyQueue.get(msg.path);
+        if (entry) {
+          await this.dirtyQueue.completeRetryableFailure(msg.path);
+        } else {
+          const inFlight = this.mergeInFlight.get(msg.path);
+          if (inFlight) {
+            await this.dirtyQueue.enqueue({
+              path: msg.path,
+              baseVersion: inFlight.baseVersion,
+              lastSeenHash: inFlight.sentHash,
+            });
+          }
+        }
         return;
       }
       if (msg.action === "toDownload" && msg.content !== undefined && msg.meta) {
@@ -626,7 +638,7 @@ export class SyncManager {
       return;
     }
     const localHash = await this.computeHashFromContent(entry.path, content);
-    this.mergeInFlight.set(entry.path, { sentHash: localHash });
+    this.mergeInFlight.set(entry.path, { sentHash: localHash, baseVersion: entry.baseVersion });
     const encoding = isBinaryPath(entry.path) ? "base64" : undefined;
     const sent = this.wsClient.sendMergePut(this.vaultName, entry.path, content, {
       path: entry.path,

@@ -1,9 +1,12 @@
 package ws
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
 
 	"obsidian-goat-sync/internal/db"
@@ -481,12 +484,44 @@ func (h *Handler) sendConflictResult(sender messageSender, messageType, vault, p
 	})
 }
 
+func (h *Handler) tryAutoMerge(vault, path string, base, latest db.File, localContent []byte, localHash, encoding string, finalizers, rollbacks *[]func() error) (db.File, string, bool, error) {
+	if localHash == "" || encoding == "base64" || base.Encoding == "base64" || latest.Encoding == "base64" {
+		return db.File{}, "", false, nil
+	}
+	if calculated := hashBytes(localContent); calculated != localHash {
+		return db.File{}, "", false, fmt.Errorf("local content hash mismatch")
+	}
+	baseContent, err := h.readFileContent(vault, base)
+	if err != nil {
+		return db.File{}, "", false, err
+	}
+	serverContent, err := h.readFileContent(vault, latest)
+	if err != nil {
+		return db.File{}, "", false, err
+	}
+	merged, ok := syncpkg.MergeText(string(baseContent), string(localContent), string(serverContent))
+	if !ok {
+		return db.File{}, "", false, nil
+	}
+	mergedBytes := []byte(merged)
+	mergedHash := hashBytes(mergedBytes)
+	contentRef, err := h.stageContent(vault, path, mergedBytes, finalizers, rollbacks)
+	if err != nil {
+		return db.File{}, "", false, err
+	}
+	newFile, err := h.queries.UpdateFile(vault, path, mergedHash, contentRef, "")
+	if err != nil {
+		return db.File{}, "", false, err
+	}
+	return newFile, merged, true, nil
+}
+
 func (h *Handler) handleFilePut(sender messageSender, msg IncomingMessage, finalizers *[]func() error, rollbacks *[]func() error) {
 	if msg.File == nil {
 		sender.SendMessage(OutgoingMessage{Type: "filePutResult", Path: msg.Path, Action: string(syncpkg.MatrixActionConflict), Error: "missing file payload"})
 		return
 	}
-	input, sf, serverExists, err := h.decisionInputForPath(msg, *msg.File, syncpkg.MessageFilePut, false)
+	input, sf, serverExists, err := h.decisionInputForPath(msg, *msg.File, syncpkg.MessageFilePut, true)
 	if err != nil {
 		sender.SendMessage(OutgoingMessage{Type: "filePutResult", Path: msg.Path, Error: err.Error()})
 		return
@@ -523,6 +558,48 @@ func (h *Handler) handleFilePut(sender messageSender, msg IncomingMessage, final
 		sender.SendMessage(OutgoingMessage{Type: "filePutResult", Path: path, Action: "okUpdateMeta", Meta: serverMeta(newFile)})
 	case syncpkg.MatrixActionToDeleteLocal:
 		sender.SendMessage(OutgoingMessage{Type: "filePutResult", Path: path, Action: "toDeleteLocal", Meta: serverMeta(sf)})
+	case syncpkg.MatrixActionToDownload:
+		entry, ok := h.makeDownloadEntry(msg.Vault, sf)
+		if !ok {
+			sender.SendMessage(OutgoingMessage{Type: "filePutResult", Path: path, Error: "failed to read server file"})
+			return
+		}
+		sender.SendMessage(OutgoingMessage{
+			Type:     "filePutResult",
+			Path:     path,
+			Action:   string(syncpkg.MatrixActionToDownload),
+			Content:  entry.Content,
+			Encoding: entry.Encoding,
+			Meta:     serverMeta(sf),
+		})
+	case syncpkg.MatrixActionAutoMerge:
+		if msg.File.BaseVersion == nil {
+			h.sendConflictResult(sender, "filePutResult", msg.Vault, path, syncpkg.MatrixActionConflict, sf)
+			return
+		}
+		base, err := h.queries.GetFileVersion(msg.Vault, path, *msg.File.BaseVersion)
+		if err != nil {
+			sender.SendMessage(OutgoingMessage{Type: "filePutResult", Path: path, Error: err.Error()})
+			return
+		}
+		fileContent := decodeContent(msg.Content, msg.Encoding)
+		mergedFile, merged, ok, err := h.tryAutoMerge(msg.Vault, path, base, sf, fileContent, msg.File.LocalHash, msg.Encoding, finalizers, rollbacks)
+		if err != nil {
+			sender.SendMessage(OutgoingMessage{Type: "filePutResult", Path: path, Error: err.Error()})
+			return
+		}
+		if !ok {
+			h.sendConflictResult(sender, "filePutResult", msg.Vault, path, syncpkg.MatrixActionConflict, sf)
+			return
+		}
+		sender.SendMessage(OutgoingMessage{
+			Type:     "filePutResult",
+			Path:     path,
+			Action:   string(syncpkg.MatrixActionToDownload),
+			Content:  merged,
+			Encoding: mergedFile.Encoding,
+			Meta:     serverMeta(mergedFile),
+		})
 	case syncpkg.MatrixActionConflict, syncpkg.MatrixActionDeleteConflict:
 		h.sendConflictResult(sender, "filePutResult", msg.Vault, path, result.Action, sf)
 	default:
@@ -837,6 +914,11 @@ func decodeContent(content, encoding string) []byte {
 		return data
 	}
 	return []byte(content)
+}
+
+func hashBytes(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func encodeContent(data []byte) (encoding string, content string) {

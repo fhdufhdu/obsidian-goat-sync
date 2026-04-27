@@ -738,10 +738,10 @@ func TestSyncInitReturnsAutoMergePayloadForCleanTextCandidate(t *testing.T) {
 	}
 }
 
-func TestFilePutDoesNotReturnAutoMergeForCleanTextCandidate(t *testing.T) {
+func TestFilePutAutoMergeSuccessCreatesVersionAndDownloadsMerged(t *testing.T) {
 	h, _, _, _ := setupHandlerTest(t)
 	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
-	seedVersionObject(t, h, "personal", "notes/a.md", "a\nB-server\n", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nserver\n", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -750,27 +750,27 @@ func TestFilePutDoesNotReturnAutoMergeForCleanTextCandidate(t *testing.T) {
 		Type:     "filePut",
 		Vault:    "personal",
 		Path:     "notes/a.md",
-		Content:  "A-local\nb\n",
+		Content:  "local\nb\n",
 		Encoding: "",
 		File: &FilePayload{
 			Path:        "notes/a.md",
 			Exists:      true,
 			BaseVersion: int64Ptr(1),
 			BaseHash:    hashString("a\nb\n"),
-			LocalHash:   hashString("A-local\nb\n"),
+			LocalHash:   hashString("local\nb\n"),
 		},
 	})
 
 	msg := lastMessage(t, c)
-	if msg.Action == "autoMerge" || msg.Action == "toDownload" {
-		t.Fatalf("filePutResult must not surface read-side action in Task 8: %#v", msg)
-	}
-	if msg.Action != "conflict" {
+	if msg.Action != "toDownload" || msg.Content != "local\nserver\n" {
 		t.Fatalf("filePutResult = %#v", msg)
+	}
+	if msg.Meta.ServerVersion != 3 {
+		t.Fatalf("serverVersion = %d, want 3", msg.Meta.ServerVersion)
 	}
 }
 
-func TestFilePutDoesNotReturnToDownloadWhenLocalEqualsBaseAndServerAdvanced(t *testing.T) {
+func TestFilePutReturnsDownloadWhenLocalEqualsBaseAndServerAdvanced(t *testing.T) {
 	h, _, _, _ := setupHandlerTest(t)
 	seedVersionObject(t, h, "personal", "notes/a.md", "base", "")
 	seedVersionObject(t, h, "personal", "notes/a.md", "server", "")
@@ -793,10 +793,7 @@ func TestFilePutDoesNotReturnToDownloadWhenLocalEqualsBaseAndServerAdvanced(t *t
 	})
 
 	msg := lastMessage(t, c)
-	if msg.Action == "toDownload" || msg.Action == "autoMerge" {
-		t.Fatalf("filePutResult must not surface read-side action in Task 8: %#v", msg)
-	}
-	if msg.Action != "conflict" {
+	if msg.Action != "toDownload" || msg.Content != "server" || msg.Meta.ServerVersion != 2 {
 		t.Fatalf("filePutResult = %#v", msg)
 	}
 }

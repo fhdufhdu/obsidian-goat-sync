@@ -111,4 +111,48 @@ describe("auto merge flow", () => {
     });
     expect(harness.dirtyQueue.get("notes/a.md")?.lastSeenHash).toBe(newerHash);
   });
+
+  test("mergePutResult preserves on-disk content when user edited during merge", async () => {
+    const localHash = await sha256("local");
+    const newerHash = await sha256("newer local");
+    const harness = await createSyncManagerHarness({
+      files: { "notes/a.md": "newer local" },
+      meta: { "notes/a.md": { prevServerVersion: 1, prevServerHash: "base" } },
+      dirty: [{ path: "notes/a.md", baseVersion: 1, lastSeenHash: localHash }],
+    });
+    await harness.dirtyQueue.markSentHash("notes/a.md", localHash, localHash);
+    await harness.dirtyQueue.enqueue({ path: "notes/a.md", baseVersion: 1, lastSeenHash: newerHash });
+    await harness.manager["handleMergePutResult"]({
+      type: "mergePutResult",
+      path: "notes/a.md",
+      action: "toDownload",
+      content: "merged",
+      meta: { path: "notes/a.md", serverVersion: 3, serverHash: await sha256("merged"), isDeleted: false },
+    });
+    expect(await harness.adapter.read("notes/a.md")).toBe("newer local");
+    expect(harness.fileMeta.get("notes/a.md")).toEqual({ prevServerVersion: 3, prevServerHash: await sha256("merged") });
+    expect(harness.dirtyQueue.get("notes/a.md")).toMatchObject({ baseVersion: 3, lastSeenHash: newerHash });
+  });
+
+  test("filePutResult toDownload preserves on-disk content when user edited during put", async () => {
+    const localHash = await sha256("local");
+    const newerHash = await sha256("newer local");
+    const harness = await createSyncManagerHarness({
+      files: { "notes/a.md": "newer local" },
+      meta: { "notes/a.md": { prevServerVersion: 1, prevServerHash: "base" } },
+      dirty: [{ path: "notes/a.md", baseVersion: 1, lastSeenHash: localHash }],
+    });
+    await harness.dirtyQueue.markSentHash("notes/a.md", localHash, localHash);
+    await harness.dirtyQueue.enqueue({ path: "notes/a.md", baseVersion: 1, lastSeenHash: newerHash });
+    await harness.manager["handleFilePutResult"]({
+      type: "filePutResult",
+      path: "notes/a.md",
+      action: "toDownload",
+      content: "merged",
+      meta: { path: "notes/a.md", serverVersion: 3, serverHash: await sha256("merged"), isDeleted: false },
+    });
+    expect(await harness.adapter.read("notes/a.md")).toBe("newer local");
+    expect(harness.fileMeta.get("notes/a.md")).toEqual({ prevServerVersion: 3, prevServerHash: await sha256("merged") });
+    expect(harness.dirtyQueue.get("notes/a.md")).toMatchObject({ baseVersion: 3, lastSeenHash: newerHash });
+  });
 });

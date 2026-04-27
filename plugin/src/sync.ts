@@ -278,17 +278,7 @@ export class SyncManager {
     } else if (msg.action === "toDownload" && msg.content !== undefined && msg.meta) {
       const entry = this.dirtyQueue.get(msg.path);
       const sentHash = entry?.sentHash || entry?.lastSeenHash || "";
-      await this.applyDownloadEntry({
-        path: msg.path,
-        content: msg.content,
-        serverVersion: msg.meta.serverVersion,
-        serverHash: msg.meta.serverHash || "",
-        encoding: msg.encoding,
-      });
-      await this.dirtyQueue.completeMergeSuccess(msg.path, sentHash, {
-        serverVersion: msg.meta.serverVersion,
-        serverHash: msg.meta.serverHash || "",
-      });
+      await this.applyMergeDownloadResult(msg, sentHash);
     } else if ((msg.action === "conflict" || msg.action === "deleteConflict") && msg.conflict) {
       await this.dirtyQueue.remove(msg.path);
       this.blockedPaths.block({
@@ -404,17 +394,7 @@ export class SyncManager {
       if (msg.action === "toDownload" && msg.content !== undefined && msg.meta) {
         const entry = this.dirtyQueue.get(msg.path);
         const sentHash = this.mergeInFlight.get(msg.path)?.sentHash || entry?.sentHash || entry?.lastSeenHash || "";
-        await this.applyDownloadEntry({
-          path: msg.path,
-          content: msg.content,
-          serverVersion: msg.meta.serverVersion,
-          serverHash: msg.meta.serverHash || "",
-          encoding: msg.encoding,
-        });
-        await this.dirtyQueue.completeMergeSuccess(msg.path, sentHash, {
-          serverVersion: msg.meta.serverVersion,
-          serverHash: msg.meta.serverHash || "",
-        });
+        await this.applyMergeDownloadResult(msg, sentHash);
         return;
       }
       if (msg.action === "autoMergeRequired" && msg.meta) {
@@ -648,6 +628,32 @@ export class SyncManager {
       this.mergeInFlight.delete(entry.path);
       await this.dirtyQueue.enqueue({ path: entry.path, baseVersion: entry.baseVersion, lastSeenHash: localHash });
     }
+  }
+
+  private async applyMergeDownloadResult(msg: ServerMessage, sentHash: string): Promise<void> {
+    if (!msg.path || msg.content === undefined || !msg.meta) return;
+
+    const entry = this.dirtyQueue.get(msg.path);
+    const hasNewerLocalEdit = !!entry && entry.lastSeenHash !== sentHash;
+    if (!hasNewerLocalEdit) {
+      await this.applyDownloadEntry({
+        path: msg.path,
+        content: msg.content,
+        serverVersion: msg.meta.serverVersion,
+        serverHash: msg.meta.serverHash || "",
+        encoding: msg.encoding,
+      });
+    } else {
+      this.fileMeta.set(msg.path, {
+        prevServerVersion: msg.meta.serverVersion,
+        prevServerHash: msg.meta.serverHash || "",
+      });
+    }
+
+    await this.dirtyQueue.completeMergeSuccess(msg.path, sentHash, {
+      serverVersion: msg.meta.serverVersion,
+      serverHash: msg.meta.serverHash || "",
+    });
   }
 
   private async applyDownloadEntry(entry: DownloadEntry) {

@@ -130,6 +130,27 @@ func assertNoGoatSyncTrash(t *testing.T, dir, relativeDir string) {
 	}
 }
 
+func TestMergePutMessageShape(t *testing.T) {
+	raw := []byte(`{"type":"mergePut","vault":"personal","path":"notes/a.md","content":"local","expectedServerVersion":2,"file":{"path":"notes/a.md","exists":true,"baseVersion":1,"baseHash":"base","localHash":"local"}}`)
+	msg, err := UnmarshalMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.ExpectedServerVersion == nil || *msg.ExpectedServerVersion != 2 {
+		t.Fatalf("expectedServerVersion = %#v", msg.ExpectedServerVersion)
+	}
+}
+
+func TestHandleMessageAcceptsMergePutType(t *testing.T) {
+	h, _, _, _ := setupHandler(t)
+	client := makeClient(h.hub, "personal")
+	h.HandleMessage(client, []byte(`{"type":"mergePut","vault":"personal","path":"notes/a.md","expectedServerVersion":1,"file":{"path":"notes/a.md","exists":true,"baseVersion":1,"localHash":"local"},"content":"local"}`))
+	msg := readResponse(t, client)
+	if msg.Type != "mergePutResult" {
+		t.Fatalf("message = %#v", msg)
+	}
+}
+
 func TestHandleVaultCreate(t *testing.T) {
 	h, q, _, _ := setupHandler(t)
 	c := makeClient(h.hub, "")

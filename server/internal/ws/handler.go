@@ -138,7 +138,7 @@ func (h *Handler) HandleMessage(client *Client, data []byte) {
 
 func isKnownMessageType(messageType string) bool {
 	switch messageType {
-	case "vaultCreate", "syncInit", "fileCheck", "filePut", "fileDelete", "conflictResolve":
+	case "vaultCreate", "syncInit", "fileCheck", "filePut", "fileDelete", "conflictResolve", "mergePut":
 		return true
 	default:
 		return false
@@ -159,9 +159,15 @@ func (h *Handler) dispatchMessage(sender messageSender, client *Client, msg Inco
 		h.handleFileDelete(sender, msg, finalizers, rollbacks)
 	case "conflictResolve":
 		h.handleConflictResolve(sender, client, msg, finalizers, rollbacks)
+	case "mergePut":
+		h.handleMergePut(sender, msg, finalizers, rollbacks)
 	default:
 		log.Printf("unknown message type: %s", msg.Type)
 	}
+}
+
+func (h *Handler) handleMergePut(sender messageSender, msg IncomingMessage, finalizers *[]func() error, rollbacks *[]func() error) {
+	sender.SendMessage(OutgoingMessage{Type: "mergePutResult", Path: msg.Path, Action: string(syncpkg.MatrixActionConflict), Error: "mergePut handler registered before merge behavior"})
 }
 
 func (h *Handler) handleVaultCreate(sender messageSender, msg IncomingMessage) {

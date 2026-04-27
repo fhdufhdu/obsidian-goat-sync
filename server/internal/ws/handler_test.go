@@ -664,6 +664,43 @@ func TestSyncInitDoesNotAutoMergeWhenBaseObjectMissing(t *testing.T) {
 	}
 }
 
+func TestSyncInitReturnsActionableResponseWhenServerObjectMissing(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	if _, err := q.UpdateFile("personal", "notes/a.md", hashString("a\nB-server\n"), "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ""); err != nil {
+		t.Fatalf("create server version: %v", err)
+	}
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:  "syncInit",
+		Vault: "personal",
+		Files: []FilePayload{{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("a\nb\n"),
+			LocalHash:   hashString("A-local\nb\n"),
+		}},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Type == "error" && msg.Error != "" {
+		return
+	}
+	if len(msg.Conflicts) != 0 {
+		return
+	}
+	if len(msg.ToAutoMerge) == 0 && len(msg.ToDownload) == 0 && len(msg.ToPut) == 0 &&
+		len(msg.ToUpdateMeta) == 0 && len(msg.ToDeleteLocal) == 0 && len(msg.ToRemoveMeta) == 0 &&
+		msg.Error == "" {
+		t.Fatalf("syncResult must not be silently empty for unreadable conflict: %#v", msg)
+	}
+	t.Fatalf("syncResult must surface unreadable conflict explicitly: %#v", msg)
+}
+
 func TestSyncInitReturnsAutoMergePayloadForCleanTextCandidate(t *testing.T) {
 	h, _, _, _ := setupHandlerTest(t)
 	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "utf-8")

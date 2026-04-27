@@ -243,10 +243,12 @@ func (h *Handler) handleSyncInit(sender messageSender, client *Client, msg Incom
 				Encoding:      sf.Encoding,
 			})
 		case syncpkg.MatrixActionConflict, syncpkg.MatrixActionDeleteConflict:
-			conflict, ok := h.makeSyncInitConflict(msg.Vault, cf, sf)
-			if ok {
-				conflicts = append(conflicts, conflict)
+			conflict, err := h.makeSyncInitConflict(msg.Vault, cf, sf)
+			if err != nil {
+				sender.SendMessage(OutgoingMessage{Type: "error", Vault: msg.Vault, Path: cf.Path, Error: err.Error()})
+				return
 			}
+			conflicts = append(conflicts, conflict)
 		case syncpkg.MatrixActionNone:
 		}
 	}
@@ -356,10 +358,10 @@ func (h *Handler) handleFileCheck(sender messageSender, msg IncomingMessage) {
 	sender.SendMessage(resp)
 }
 
-func (h *Handler) makeSyncInitConflict(vault string, file FilePayload, sf db.File) (SyncConflictEntry, bool) {
+func (h *Handler) makeSyncInitConflict(vault string, file FilePayload, sf db.File) (SyncConflictEntry, error) {
 	content, err := h.readFileContent(vault, sf)
 	if err != nil {
-		return SyncConflictEntry{}, false
+		return SyncConflictEntry{}, err
 	}
 	enc, encoded := encodeContentWithRowEncoding(content, sf.Encoding)
 	return SyncConflictEntry{
@@ -371,7 +373,7 @@ func (h *Handler) makeSyncInitConflict(vault string, file FilePayload, sf db.Fil
 		ServerContent: encoded,
 		IsDeleted:     sf.IsDeleted,
 		Encoding:      enc,
-	}, true
+	}, nil
 }
 
 func (h *Handler) decisionInputForPath(msg IncomingMessage, payload FilePayload, message syncpkg.MatrixMessage, readSideBaseAware bool) (syncpkg.DecisionInput, db.File, bool, error) {

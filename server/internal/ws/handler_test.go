@@ -611,6 +611,37 @@ func TestFilePutDoesNotReturnAutoMergeForCleanTextCandidate(t *testing.T) {
 	}
 }
 
+func TestFilePutDoesNotReturnToDownloadWhenLocalEqualsBaseAndServerAdvanced(t *testing.T) {
+	h, _, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "base", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "server", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:    "filePut",
+		Vault:   "personal",
+		Path:    "notes/a.md",
+		Content: "base",
+		File: &FilePayload{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("base"),
+			LocalHash:   hashString("base"),
+		},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action == "toDownload" || msg.Action == "autoMerge" {
+		t.Fatalf("filePutResult must not surface read-side action in Task 8: %#v", msg)
+	}
+	if msg.Action != "conflict" {
+		t.Fatalf("filePutResult = %#v", msg)
+	}
+}
+
 func TestHandleSyncInit_NoPrev_ActiveSameHash(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")

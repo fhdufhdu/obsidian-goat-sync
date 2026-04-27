@@ -374,7 +374,7 @@ func (h *Handler) makeSyncInitConflict(vault string, file FilePayload, sf db.Fil
 	}, true
 }
 
-func (h *Handler) decisionInputForPath(msg IncomingMessage, payload FilePayload, message syncpkg.MatrixMessage, allowAutoMerge bool) (syncpkg.DecisionInput, db.File, bool, error) {
+func (h *Handler) decisionInputForPath(msg IncomingMessage, payload FilePayload, message syncpkg.MatrixMessage, readSideBaseAware bool) (syncpkg.DecisionInput, db.File, bool, error) {
 	path := payload.Path
 	if path == "" {
 		path = msg.Path
@@ -402,7 +402,7 @@ func (h *Handler) decisionInputForPath(msg IncomingMessage, payload FilePayload,
 
 	var base db.File
 	baseExists := false
-	if payload.BaseVersion != nil {
+	if readSideBaseAware && payload.BaseVersion != nil {
 		base, err = h.queries.GetFileVersion(msg.Vault, path, *payload.BaseVersion)
 		if err != nil && err != sql.ErrNoRows {
 			return syncpkg.DecisionInput{}, db.File{}, false, err
@@ -411,7 +411,7 @@ func (h *Handler) decisionInputForPath(msg IncomingMessage, payload FilePayload,
 	}
 
 	autoMerge := syncpkg.AutoMergeNotApplicable
-	if allowAutoMerge {
+	if readSideBaseAware {
 		autoMerge = h.autoMergeState(msg.Vault, path, payload, sf, base, baseExists)
 	}
 

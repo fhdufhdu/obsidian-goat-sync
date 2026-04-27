@@ -85,11 +85,34 @@ export class DirtyQueue {
     });
   }
 
+  async completeMergeSuccess(path: string, sentHash: string, meta: ServerMeta): Promise<void> {
+    await this.mutex.runExclusive(() => {
+      const entry = this.entries.get(path);
+      if (!entry) return;
+      if (entry.lastSeenHash === sentHash) {
+        this.entries.delete(path);
+        return;
+      }
+      entry.baseVersion = meta.serverVersion;
+      entry.status = "pending";
+      entry.sentHash = undefined;
+    });
+  }
+
   async completeRetryableFailure(path: string): Promise<void> {
     await this.mutex.runExclusive(() => {
       const entry = this.entries.get(path);
       if (!entry) return;
       entry.status = "retryableFailed";
+      entry.sentHash = undefined;
+    });
+  }
+
+  async release(path: string): Promise<void> {
+    await this.mutex.runExclusive(() => {
+      const entry = this.entries.get(path);
+      if (!entry) return;
+      entry.status = "pending";
       entry.sentHash = undefined;
     });
   }

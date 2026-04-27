@@ -64,6 +64,7 @@ export class SyncManager {
   private blockedPaths: BlockedPaths;
   private selfWriteSuppress: SelfWriteSuppress;
   private orchestrator: SyncOrchestrator;
+  private mergeInFlight = new Map<string, { sentHash: string }>();
 
   constructor(
     app: App,
@@ -103,6 +104,7 @@ export class SyncManager {
     this.wsClient.on("fileCheckResult", (msg) => this.handleFileCheckResult(msg));
 
     this.wsClient.on("filePutResult", (msg) => this.handleFilePutResult(msg));
+    this.wsClient.on("mergePutResult", (msg) => this.handleMergePutResult(msg));
     this.wsClient.on("fileDeleteResult", (msg) => this.handleFileDeleteResult(msg));
     this.wsClient.on("conflictResolveResult", (msg) => this.handleConflictResolveResult(msg));
     this.wsClient.on("reconnected", () => {
@@ -231,6 +233,12 @@ export class SyncManager {
       }
     }
 
+    if (msg.toAutoMerge) {
+      for (const entry of msg.toAutoMerge) {
+        await this.startAutoMerge(entry);
+      }
+    }
+
     if (msg.conflicts && msg.conflicts.length > 0) {
       for (const c of msg.conflicts) {
         await this.enqueueConflict(c);
@@ -267,6 +275,20 @@ export class SyncManager {
     } else if (msg.action === "toDeleteLocal" && msg.meta) {
       await this.applyServerDelete(msg.path, msg.meta.serverVersion, msg.meta.serverHash || "");
       await this.dirtyQueue.remove(msg.path);
+    } else if (msg.action === "toDownload" && msg.content !== undefined && msg.meta) {
+      const entry = this.dirtyQueue.get(msg.path);
+      const sentHash = entry?.sentHash || entry?.lastSeenHash || "";
+      await this.applyDownloadEntry({
+        path: msg.path,
+        content: msg.content,
+        serverVersion: msg.meta.serverVersion,
+        serverHash: msg.meta.serverHash || "",
+        encoding: msg.encoding,
+      });
+      await this.dirtyQueue.completeMergeSuccess(msg.path, sentHash, {
+        serverVersion: msg.meta.serverVersion,
+        serverHash: msg.meta.serverHash || "",
+      });
     } else if ((msg.action === "conflict" || msg.action === "deleteConflict") && msg.conflict) {
       await this.dirtyQueue.remove(msg.path);
       this.blockedPaths.block({
@@ -355,9 +377,66 @@ export class SyncManager {
           await this.applyServerDelete(msg.path, msg.meta.serverVersion, msg.meta.serverHash || "");
         }
         break;
+      case "autoMergeRequired":
+        if (msg.meta) {
+          const meta = this.fileMeta.get(msg.path);
+          if (meta) {
+            await this.startAutoMerge({
+              path: msg.path,
+              baseVersion: meta.prevServerVersion,
+              baseHash: meta.prevServerHash,
+              serverVersion: msg.meta.serverVersion,
+              serverHash: msg.meta.serverHash || "",
+            });
+          }
+        }
+        break;
       case "toRemoveMeta":
         this.fileMeta.remove(msg.path);
         break;
+    }
+  }
+
+  private async handleMergePutResult(msg: ServerMessage) {
+    if (this.handleServerError(msg)) return;
+    if (!msg.path) return;
+    try {
+      if (msg.action === "toDownload" && msg.content !== undefined && msg.meta) {
+        const entry = this.dirtyQueue.get(msg.path);
+        const sentHash = this.mergeInFlight.get(msg.path)?.sentHash || entry?.sentHash || entry?.lastSeenHash || "";
+        await this.applyDownloadEntry({
+          path: msg.path,
+          content: msg.content,
+          serverVersion: msg.meta.serverVersion,
+          serverHash: msg.meta.serverHash || "",
+          encoding: msg.encoding,
+        });
+        await this.dirtyQueue.completeMergeSuccess(msg.path, sentHash, {
+          serverVersion: msg.meta.serverVersion,
+          serverHash: msg.meta.serverHash || "",
+        });
+        return;
+      }
+      if (msg.action === "autoMergeRequired" && msg.meta) {
+        const meta = this.fileMeta.get(msg.path);
+        if (meta) {
+          await this.startAutoMerge({
+            path: msg.path,
+            baseVersion: meta.prevServerVersion,
+            baseHash: meta.prevServerHash,
+            serverVersion: msg.meta.serverVersion,
+            serverHash: msg.meta.serverHash || "",
+          });
+        }
+        return;
+      }
+      if ((msg.action === "conflict" || msg.action === "deleteConflict") && msg.conflict) {
+        await this.enqueueLatestConflict(msg);
+      }
+    } finally {
+      if (msg.action !== "autoMergeRequired") {
+        this.mergeInFlight.delete(msg.path);
+      }
     }
   }
 
@@ -542,6 +621,35 @@ export class SyncManager {
     }
   }
 
+  private async startAutoMerge(entry: {
+    path: string;
+    baseVersion: number;
+    baseHash: string;
+    localHash?: string;
+    serverVersion: number;
+    serverHash: string;
+    encoding?: string;
+  }) {
+    const content = await this.readFileContent(entry.path);
+    if (content === null) {
+      return;
+    }
+    const localHash = await this.computeHashFromContent(entry.path, content);
+    this.mergeInFlight.set(entry.path, { sentHash: localHash });
+    const encoding = isBinaryPath(entry.path) ? "base64" : undefined;
+    const sent = this.wsClient.sendMergePut(this.vaultName, entry.path, content, {
+      path: entry.path,
+      exists: true,
+      baseVersion: entry.baseVersion,
+      baseHash: entry.baseHash,
+      localHash,
+    }, entry.serverVersion, encoding);
+    if (!sent) {
+      this.mergeInFlight.delete(entry.path);
+      await this.dirtyQueue.enqueue({ path: entry.path, baseVersion: entry.baseVersion, lastSeenHash: localHash });
+    }
+  }
+
   private async applyDownloadEntry(entry: DownloadEntry) {
     const localHash = entry.encoding === "base64"
       ? await sha256(base64ToArrayBuffer(entry.content))
@@ -568,6 +676,7 @@ export class SyncManager {
     const entries = this.deleteQueue.list();
     for (const entry of entries) {
       if (entry.status !== "pending" && entry.status !== "retryableFailed") continue;
+      if (this.mergeInFlight.has(entry.path)) continue;
 
       try {
         const exists = await this.vault.adapter.exists(entry.path);
@@ -605,6 +714,10 @@ export class SyncManager {
     while (true) {
       const next = await this.dirtyQueue.claimNext();
       if (!next) return "ok";
+      if (this.mergeInFlight.has(next.path)) {
+        await this.dirtyQueue.release(next.path);
+        return "ok";
+      }
 
       try {
         await this.putDirtyFile(next);

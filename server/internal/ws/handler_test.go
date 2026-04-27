@@ -2,6 +2,8 @@ package ws
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"os"
@@ -30,6 +32,11 @@ func setupHandler(t *testing.T) (*Handler, *db.Queries, *storage.Storage, string
 	return h, q, s, dir
 }
 
+func setupHandlerTest(t *testing.T) (*Handler, *db.Queries, *storage.Storage, string) {
+	t.Helper()
+	return setupHandler(t)
+}
+
 func makeClient(hub *Hub, vault string) *Client {
 	return &Client{
 		hub:   hub,
@@ -46,6 +53,21 @@ func readResponse(t *testing.T, c *Client) OutgoingMessage {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 	return msg
+}
+
+func sendJSON(t *testing.T, h *Handler, c *Client, msg IncomingMessage) {
+	t.Helper()
+	h.HandleMessage(c, mustJSON(msg))
+}
+
+func lastMessage(t *testing.T, c *Client) OutgoingMessage {
+	t.Helper()
+	return readResponse(t, c)
+}
+
+func hashString(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
 
 func int64Ptr(v int64) *int64 { return &v }
@@ -392,6 +414,57 @@ func TestHandleFilePutCreatesMissingVault(t *testing.T) {
 	}
 	if string(content) != "hello" {
 		t.Fatalf("content = %q", content)
+	}
+}
+
+func TestFilePutStoresHistoricalObjectRefs(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:    "filePut",
+		Vault:   "personal",
+		Path:    "notes/history.md",
+		Content: "one",
+		File: &FilePayload{
+			Path:      "notes/history.md",
+			Exists:    true,
+			LocalHash: hashString("one"),
+		},
+	})
+	resp := lastMessage(t, c)
+	if resp.Type != "filePutResult" || resp.Action != "okUpdateMeta" {
+		t.Fatalf("expected initial okUpdateMeta, got %#v", resp)
+	}
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:    "filePut",
+		Vault:   "personal",
+		Path:    "notes/history.md",
+		Content: "two",
+		File: &FilePayload{
+			Path:        "notes/history.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			LocalHash:   hashString("two"),
+		},
+	})
+	resp = lastMessage(t, c)
+	if resp.Type != "filePutResult" || resp.Action != "okUpdateMeta" {
+		t.Fatalf("expected update okUpdateMeta, got %#v", resp)
+	}
+
+	base, err := q.GetFileVersion("personal", "notes/history.md", 1)
+	if err != nil {
+		t.Fatalf("get base version: %v", err)
+	}
+	content, err := h.storage.ReadObject(base.ContentRef)
+	if err != nil {
+		t.Fatalf("read version 1 object %q: %v", base.ContentRef, err)
+	}
+	if string(content) != "one" {
+		t.Fatalf("version 1 object content = %q, want %q", content, "one")
 	}
 }
 

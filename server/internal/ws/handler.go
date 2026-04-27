@@ -310,12 +310,12 @@ func (h *Handler) handleFileCheck(sender messageSender, msg IncomingMessage) {
 			IsDeleted:     sf.IsDeleted,
 		}
 	case syncpkg.MatrixActionConflict, syncpkg.MatrixActionDeleteConflict:
-		content, rerr := h.storage.ReadFile(msg.Vault, msg.Path)
+		content, rerr := h.readFileContent(msg.Vault, sf)
 		if rerr != nil {
 			sender.SendMessage(OutgoingMessage{Type: "fileCheckResult", Path: msg.Path, Action: string(result.Action), Error: rerr.Error()})
 			return
 		}
-		enc, encoded := encodeContent(content)
+		enc, encoded := encodeContentWithRowEncoding(content, sf.Encoding)
 		resp.Action = string(result.Action)
 		resp.Conflict = &ConflictInfo{
 			ServerVersion: sf.Version,
@@ -336,11 +336,11 @@ func (h *Handler) handleFileCheck(sender messageSender, msg IncomingMessage) {
 }
 
 func (h *Handler) makeSyncInitConflict(vault string, file FilePayload, sf db.File) (SyncConflictEntry, bool) {
-	content, err := h.storage.ReadFile(vault, file.Path)
+	content, err := h.readFileContent(vault, sf)
 	if err != nil {
 		return SyncConflictEntry{}, false
 	}
-	enc, encoded := encodeContent(content)
+	enc, encoded := encodeContentWithRowEncoding(content, sf.Encoding)
 	return SyncConflictEntry{
 		Path:          file.Path,
 		BaseVersion:   file.BaseVersion,
@@ -401,12 +401,12 @@ func serverMeta(f db.File) *ServerMetaPayload {
 }
 
 func (h *Handler) sendConflictResult(sender messageSender, messageType, vault, path string, action syncpkg.MatrixAction, sf db.File) {
-	content, err := h.storage.ReadFile(vault, path)
+	content, err := h.readFileContent(vault, sf)
 	if err != nil {
 		sender.SendMessage(OutgoingMessage{Type: messageType, Path: path, Action: string(action), Error: err.Error()})
 		return
 	}
-	enc, encoded := encodeContent(content)
+	enc, encoded := encodeContentWithRowEncoding(content, sf.Encoding)
 	sender.SendMessage(OutgoingMessage{
 		Type:   messageType,
 		Path:   path,
@@ -440,15 +440,12 @@ func (h *Handler) handleFilePut(sender messageSender, msg IncomingMessage, final
 	switch result.Action {
 	case syncpkg.MatrixActionOkUpdateMeta:
 		fileContent := decodeContent(msg.Content, msg.Encoding)
-		stage, err := h.storage.StageWrite(msg.Vault, path, fileContent)
+		contentRef, err := h.stageContent(msg.Vault, path, fileContent, finalizers, rollbacks)
 		if err != nil {
 			sender.SendMessage(OutgoingMessage{Type: "filePutResult", Path: path, Error: err.Error()})
 			return
 		}
-		*finalizers = append(*finalizers, stage.Commit)
-		*rollbacks = append(*rollbacks, stage.Rollback)
 
-		contentRef := contentRefForHash(msg.File.LocalHash)
 		var newFile db.File
 		if !serverExists {
 			newFile, err = h.queries.CreateFile(msg.Vault, path, msg.File.LocalHash, contentRef, msg.Encoding)
@@ -565,12 +562,12 @@ func (h *Handler) handleConflictResolveUpdate(sender messageSender, msg Incoming
 			sender.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: "file not found"})
 			return
 		}
-		content, rerr := h.storage.ReadFile(msg.Vault, msg.Path)
+		content, rerr := h.readFileContent(msg.Vault, sf)
 		if rerr != nil {
 			sender.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: rerr.Error()})
 			return
 		}
-		enc, encoded := encodeContent(content)
+		enc, encoded := encodeContentWithRowEncoding(content, sf.Encoding)
 		sender.SendMessage(OutgoingMessage{
 			Type: "conflictResolveResult",
 			Path: msg.Path,
@@ -612,15 +609,13 @@ func (h *Handler) handleConflictResolveUpdate(sender messageSender, msg Incoming
 	}
 
 	fileContent := decodeContent(msg.Content, msg.Encoding)
-	stage, err := h.storage.StageWrite(msg.Vault, msg.Path, fileContent)
+	contentRef, err := h.stageContent(msg.Vault, msg.Path, fileContent, finalizers, rollbacks)
 	if err != nil {
 		sender.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: err.Error()})
 		return
 	}
-	*finalizers = append(*finalizers, stage.Commit)
-	*rollbacks = append(*rollbacks, stage.Rollback)
 
-	newFile, uerr := h.queries.UpdateFile(msg.Vault, msg.Path, localHash, contentRefForHash(localHash), msg.Encoding)
+	newFile, uerr := h.queries.UpdateFile(msg.Vault, msg.Path, localHash, contentRef, msg.Encoding)
 	if uerr != nil {
 		sender.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: uerr.Error()})
 		return
@@ -669,12 +664,12 @@ func (h *Handler) handleConflictResolveDelete(sender messageSender, msg Incoming
 	}
 
 	if !optResult.OK {
-		content, rerr := h.storage.ReadFile(msg.Vault, msg.Path)
+		content, rerr := h.readFileContent(msg.Vault, sf)
 		if rerr != nil {
 			sender.SendMessage(OutgoingMessage{Type: "conflictResolveResult", Path: msg.Path, Ok: boolPtr(false), Error: rerr.Error()})
 			return
 		}
-		enc, encoded := encodeContent(content)
+		enc, encoded := encodeContentWithRowEncoding(content, sf.Encoding)
 		sender.SendMessage(OutgoingMessage{
 			Type: "conflictResolveResult",
 			Path: msg.Path,
@@ -733,11 +728,11 @@ func protocolPayloadValues(msg IncomingMessage, requireBaseVersion, requireLocal
 }
 
 func (h *Handler) makeDownloadEntry(vault string, sf db.File) (DownloadEntry, bool) {
-	content, err := h.storage.ReadFile(vault, sf.Path)
+	content, err := h.readFileContent(vault, sf)
 	if err != nil {
 		return DownloadEntry{}, false
 	}
-	enc, encoded := encodeContent(content)
+	enc, encoded := encodeContentWithRowEncoding(content, sf.Encoding)
 	return DownloadEntry{
 		Path:          sf.Path,
 		Content:       encoded,
@@ -745,6 +740,35 @@ func (h *Handler) makeDownloadEntry(vault string, sf db.File) (DownloadEntry, bo
 		ServerHash:    sf.Hash,
 		Encoding:      enc,
 	}, true
+}
+
+func (h *Handler) stageContent(vault, path string, data []byte, finalizers *[]func() error, rollbacks *[]func() error) (string, error) {
+	contentRef, objectStage, err := h.storage.StageObjectWrite(data)
+	if err != nil {
+		return "", err
+	}
+	if err := objectStage.Commit(); err != nil {
+		_ = objectStage.Rollback()
+		return "", err
+	}
+
+	latestStage, err := h.storage.StageWrite(vault, path, data)
+	if err != nil {
+		return "", err
+	}
+	*finalizers = append(*finalizers, latestStage.Commit)
+	*rollbacks = append(*rollbacks, latestStage.Rollback)
+	return contentRef, nil
+}
+
+func (h *Handler) readFileContent(vault string, f db.File) ([]byte, error) {
+	if f.ContentRef != "" {
+		content, err := h.storage.ReadObject(f.ContentRef)
+		if err == nil {
+			return content, nil
+		}
+	}
+	return h.storage.ReadFile(vault, f.Path)
 }
 
 func decodeContent(content, encoding string) []byte {
@@ -758,15 +782,18 @@ func decodeContent(content, encoding string) []byte {
 	return []byte(content)
 }
 
-func contentRefForHash(hash string) string {
-	return "sha256:" + hash
-}
-
 func encodeContent(data []byte) (encoding string, content string) {
 	if isBinary(data) {
 		return "base64", base64.StdEncoding.EncodeToString(data)
 	}
 	return "", string(data)
+}
+
+func encodeContentWithRowEncoding(data []byte, encoding string) (string, string) {
+	if encoding == "base64" {
+		return "base64", base64.StdEncoding.EncodeToString(data)
+	}
+	return encodeContent(data)
 }
 
 func isBinary(data []byte) bool {

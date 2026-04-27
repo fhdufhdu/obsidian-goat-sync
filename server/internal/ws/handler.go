@@ -207,7 +207,7 @@ func (h *Handler) handleSyncInit(sender messageSender, client *Client, msg Incom
 	var conflicts []SyncConflictEntry
 
 	for _, cf := range msg.Files {
-		input, sf, _, err := h.decisionInputForPath(msg, cf, syncpkg.MessageSyncInit)
+		input, sf, _, err := h.decisionInputForPath(msg, cf, syncpkg.MessageSyncInit, true)
 		if err != nil {
 			sender.SendMessage(OutgoingMessage{Type: "error", Error: err.Error()})
 			return
@@ -278,7 +278,7 @@ func (h *Handler) handleFileCheck(sender messageSender, msg IncomingMessage) {
 		return
 	}
 
-	input, sf, _, err := h.decisionInputForPath(msg, *msg.File, syncpkg.MessageFileCheck)
+	input, sf, _, err := h.decisionInputForPath(msg, *msg.File, syncpkg.MessageFileCheck, true)
 	if err != nil {
 		sender.SendMessage(OutgoingMessage{Type: "fileCheckResult", Path: msg.Path, Error: err.Error()})
 		return
@@ -374,7 +374,7 @@ func (h *Handler) makeSyncInitConflict(vault string, file FilePayload, sf db.Fil
 	}, true
 }
 
-func (h *Handler) decisionInputForPath(msg IncomingMessage, payload FilePayload, message syncpkg.MatrixMessage) (syncpkg.DecisionInput, db.File, bool, error) {
+func (h *Handler) decisionInputForPath(msg IncomingMessage, payload FilePayload, message syncpkg.MatrixMessage, allowAutoMerge bool) (syncpkg.DecisionInput, db.File, bool, error) {
 	path := payload.Path
 	if path == "" {
 		path = msg.Path
@@ -410,6 +410,11 @@ func (h *Handler) decisionInputForPath(msg IncomingMessage, payload FilePayload,
 		baseExists = err == nil
 	}
 
+	autoMerge := syncpkg.AutoMergeNotApplicable
+	if allowAutoMerge {
+		autoMerge = h.autoMergeState(msg.Vault, path, payload, sf, base, baseExists)
+	}
+
 	return syncpkg.DecisionInput{
 		Message:            message,
 		ClientExists:       payload.Exists,
@@ -421,7 +426,7 @@ func (h *Handler) decisionInputForPath(msg IncomingMessage, payload FilePayload,
 		DeletedFromVersion: deletedFrom,
 		BaseRowExists:      baseExists,
 		BaseHash:           base.Hash,
-		AutoMerge:          h.autoMergeState(msg.Vault, path, payload, sf, base, baseExists),
+		AutoMerge:          autoMerge,
 	}, sf, serverExists, nil
 }
 
@@ -470,7 +475,7 @@ func (h *Handler) handleFilePut(sender messageSender, msg IncomingMessage, final
 		sender.SendMessage(OutgoingMessage{Type: "filePutResult", Path: msg.Path, Action: string(syncpkg.MatrixActionConflict), Error: "missing file payload"})
 		return
 	}
-	input, sf, serverExists, err := h.decisionInputForPath(msg, *msg.File, syncpkg.MessageFilePut)
+	input, sf, serverExists, err := h.decisionInputForPath(msg, *msg.File, syncpkg.MessageFilePut, false)
 	if err != nil {
 		sender.SendMessage(OutgoingMessage{Type: "filePutResult", Path: msg.Path, Error: err.Error()})
 		return
@@ -520,7 +525,7 @@ func (h *Handler) handleFileDelete(sender messageSender, msg IncomingMessage, fi
 		return
 	}
 
-	input, sf, _, err := h.decisionInputForPath(msg, *msg.File, syncpkg.MessageFileDelete)
+	input, sf, _, err := h.decisionInputForPath(msg, *msg.File, syncpkg.MessageFileDelete, false)
 	if err != nil {
 		sender.SendMessage(OutgoingMessage{Type: "fileDeleteResult", Path: msg.Path, Error: err.Error()})
 		return

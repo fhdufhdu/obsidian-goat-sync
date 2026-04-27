@@ -90,6 +90,9 @@ func (h *Handler) HandleMessage(client *Client, data []byte) {
 				recorder.SendMessage(OutgoingMessage{Type: "error", Vault: msg.Vault, Error: err.Error()})
 				return rollbackResponseError{}
 			}
+			// This write occurs before dispatch reads, so websocket handlers run as
+			// writer transactions and cannot later hit a stale WAL read snapshot
+			// when a guarded merge append upgrades from read to write.
 		}
 		txh := h.withQueries(txq)
 		txh.dispatchMessage(&recorder, client, msg, &finalizers, &rollbacks)

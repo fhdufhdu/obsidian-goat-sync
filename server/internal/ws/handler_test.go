@@ -183,7 +183,7 @@ func TestHandleMessageAcceptsMergePutType(t *testing.T) {
 }
 
 func TestMergePutSuccessReturnsToDownload(t *testing.T) {
-	h, _, _, _ := setupHandlerTest(t)
+	h, q, _, _ := setupHandlerTest(t)
 	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
 	seedVersionObject(t, h, "personal", "notes/a.md", "a\nserver\n", "")
 
@@ -202,6 +202,20 @@ func TestMergePutSuccessReturnsToDownload(t *testing.T) {
 	msg := lastMessage(t, c)
 	if msg.Type != "mergePutResult" || msg.Action != "toDownload" || msg.Content != "local\nserver\n" {
 		t.Fatalf("mergePutResult = %#v", msg)
+	}
+	if msg.Meta == nil || msg.Meta.ServerVersion != 3 {
+		t.Fatalf("mergePutResult meta = %#v", msg.Meta)
+	}
+	latest, err := q.GetFileVersion("personal", "notes/a.md", 3)
+	if err != nil {
+		t.Fatalf("get merged version: %v", err)
+	}
+	content, err := h.storage.ReadObject(latest.ContentRef)
+	if err != nil {
+		t.Fatalf("read merged object: %v", err)
+	}
+	if string(content) != "local\nserver\n" {
+		t.Fatalf("stored merged content = %q", content)
 	}
 }
 

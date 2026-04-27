@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestCreateFile(t *testing.T) {
@@ -65,6 +66,79 @@ func TestUpdateFileIfLatestVersionRejectsStaleExpectedVersion(t *testing.T) {
 	}
 	if _, err := q.GetFileVersion("personal", "notes/hello.md", latest.Version+1); err != sql.ErrNoRows {
 		t.Fatalf("expected no appended version, got err=%v", err)
+	}
+}
+
+func TestEnsureVaultTransactionBlocksConcurrentAdvanceBeforeGuardedUpdate(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	database, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	q := NewQueries(database)
+	if err := q.CreateVault("personal"); err != nil {
+		t.Fatalf("create vault: %v", err)
+	}
+	if _, err := q.CreateFile("personal", "notes/hello.md", "base", "sha256:base", ""); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	writerDB, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open writer db: %v", err)
+	}
+	defer writerDB.Close()
+	writerQ := NewQueries(writerDB)
+
+	writerStarted := make(chan struct{})
+	writerDone := make(chan error, 1)
+	err = q.InTx(func(txq *Queries) error {
+		if err := txq.EnsureVault("personal"); err != nil {
+			return err
+		}
+		latest, err := txq.GetFile("personal", "notes/hello.md")
+		if err != nil {
+			return err
+		}
+
+		go func() {
+			close(writerStarted)
+			_, err := writerQ.UpdateFile("personal", "notes/hello.md", "concurrent", "sha256:concurrent", "")
+			writerDone <- err
+		}()
+		<-writerStarted
+
+		select {
+		case err := <-writerDone:
+			t.Fatalf("concurrent writer completed before guarded update: %v", err)
+		case <-time.After(25 * time.Millisecond):
+		}
+
+		_, err = txq.UpdateFileIfLatestVersion("personal", "notes/hello.md", latest.Version, "merged", "sha256:merged", "")
+		return err
+	})
+	if err != nil {
+		t.Fatalf("transaction guarded update: %v", err)
+	}
+
+	if err := <-writerDone; err != nil {
+		t.Fatalf("concurrent writer after transaction: %v", err)
+	}
+	merged, err := q.GetFileVersion("personal", "notes/hello.md", 2)
+	if err != nil {
+		t.Fatalf("get merged version: %v", err)
+	}
+	if merged.Hash != "merged" {
+		t.Fatalf("version 2 hash = %q, want merged", merged.Hash)
+	}
+	latest, err := q.GetFile("personal", "notes/hello.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Version != 3 || latest.Hash != "concurrent" {
+		t.Fatalf("latest after concurrent writer = %#v", latest)
 	}
 }
 

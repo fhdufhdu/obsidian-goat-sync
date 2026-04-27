@@ -236,7 +236,7 @@ func (h *Handler) handleSyncInit(sender messageSender, client *Client, msg Incom
 			toAutoMerge = append(toAutoMerge, AutoMergeEntry{
 				Path:          cf.Path,
 				BaseVersion:   *cf.BaseVersion,
-				BaseHash:      cf.BaseHash,
+				BaseHash:      input.BaseHash,
 				LocalHash:     cf.LocalHash,
 				ServerVersion: sf.Version,
 				ServerHash:    sf.Hash,
@@ -434,10 +434,19 @@ func (h *Handler) autoMergeState(_ string, _ string, payload FilePayload, sf, ba
 	if !baseExists || payload.LocalHash == "" || payload.LocalHash == base.Hash {
 		return syncpkg.AutoMergeNotApplicable
 	}
-	if sf.ContentRef != "" && base.ContentRef != "" && sf.Encoding != "base64" && base.Encoding != "base64" {
-		return syncpkg.AutoMergePossible
+	if sf.ContentRef == "" || base.ContentRef == "" || sf.Encoding == "base64" || base.Encoding == "base64" {
+		return syncpkg.AutoMergeImpossible
 	}
-	return syncpkg.AutoMergeImpossible
+	if h.storage == nil {
+		return syncpkg.AutoMergeImpossible
+	}
+	if _, err := h.storage.ReadObject(base.ContentRef); err != nil {
+		return syncpkg.AutoMergeImpossible
+	}
+	if _, err := h.storage.ReadObject(sf.ContentRef); err != nil {
+		return syncpkg.AutoMergeImpossible
+	}
+	return syncpkg.AutoMergePossible
 }
 
 func serverMeta(f db.File) *ServerMetaPayload {

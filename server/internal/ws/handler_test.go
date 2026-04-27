@@ -579,6 +579,128 @@ func TestFileCheckReturnsAutoMergeRequiredForCleanTextCandidate(t *testing.T) {
 	}
 }
 
+func TestFileCheckDoesNotAutoMergeWhenBaseObjectMissing(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	if err := q.EnsureVault("personal"); err != nil {
+		t.Fatalf("ensure vault: %v", err)
+	}
+	if _, err := q.CreateFile("personal", "notes/a.md", hashString("a\nb\n"), "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ""); err != nil {
+		t.Fatalf("create base version: %v", err)
+	}
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nB-server\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type: "fileCheck", Vault: "personal", Path: "notes/a.md",
+		File: &FilePayload{Path: "notes/a.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: hashString("a\nb\n"), LocalHash: hashString("A-local\nb\n")},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action == "autoMergeRequired" || msg.Action == "autoMerge" {
+		t.Fatalf("fileCheckResult must not advertise unreadable auto-merge: %#v", msg)
+	}
+	if msg.Action != "conflict" {
+		t.Fatalf("fileCheckResult = %#v", msg)
+	}
+}
+
+func TestFileCheckDoesNotAutoMergeWhenServerObjectMissing(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	if _, err := q.UpdateFile("personal", "notes/a.md", hashString("a\nB-server\n"), "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ""); err != nil {
+		t.Fatalf("create server version: %v", err)
+	}
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type: "fileCheck", Vault: "personal", Path: "notes/a.md",
+		File: &FilePayload{Path: "notes/a.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: hashString("a\nb\n"), LocalHash: hashString("A-local\nb\n")},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action == "autoMergeRequired" || msg.Action == "autoMerge" {
+		t.Fatalf("fileCheckResult must not advertise unreadable auto-merge: %#v", msg)
+	}
+	if msg.Action != "conflict" || msg.Error == "" {
+		t.Fatalf("fileCheckResult = %#v", msg)
+	}
+}
+
+func TestSyncInitDoesNotAutoMergeWhenBaseObjectMissing(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	if err := q.EnsureVault("personal"); err != nil {
+		t.Fatalf("ensure vault: %v", err)
+	}
+	if _, err := q.CreateFile("personal", "notes/a.md", hashString("a\nb\n"), "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ""); err != nil {
+		t.Fatalf("create base version: %v", err)
+	}
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nB-server\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:  "syncInit",
+		Vault: "personal",
+		Files: []FilePayload{{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("a\nb\n"),
+			LocalHash:   hashString("A-local\nb\n"),
+		}},
+	})
+
+	msg := lastMessage(t, c)
+	if len(msg.ToAutoMerge) != 0 {
+		t.Fatalf("syncResult must not advertise unreadable auto-merge: %#v", msg.ToAutoMerge)
+	}
+	if len(msg.Conflicts) != 1 {
+		t.Fatalf("syncResult = %#v", msg)
+	}
+}
+
+func TestSyncInitReturnsAutoMergePayloadForCleanTextCandidate(t *testing.T) {
+	h, _, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "utf-8")
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nB-server\n", "utf-8")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	localHash := hashString("A-local\nb\n")
+	sendJSON(t, h, c, IncomingMessage{
+		Type:  "syncInit",
+		Vault: "personal",
+		Files: []FilePayload{{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    "client-stale-base-hash",
+			LocalHash:   localHash,
+		}},
+	})
+
+	msg := lastMessage(t, c)
+	if len(msg.ToAutoMerge) != 1 {
+		t.Fatalf("syncResult = %#v", msg)
+	}
+	entry := msg.ToAutoMerge[0]
+	if entry.Path != "notes/a.md" ||
+		entry.BaseVersion != 1 ||
+		entry.BaseHash != hashString("a\nb\n") ||
+		entry.LocalHash != localHash ||
+		entry.ServerVersion != 2 ||
+		entry.ServerHash != hashString("a\nB-server\n") ||
+		entry.Encoding != "utf-8" {
+		t.Fatalf("toAutoMerge[0] = %#v", entry)
+	}
+}
+
 func TestFilePutDoesNotReturnAutoMergeForCleanTextCandidate(t *testing.T) {
 	h, _, _, _ := setupHandlerTest(t)
 	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")

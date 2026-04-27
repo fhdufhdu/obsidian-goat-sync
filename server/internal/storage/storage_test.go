@@ -220,8 +220,14 @@ func TestStageObjectWriteIsIdempotent(t *testing.T) {
 	s := New(dir)
 	data := []byte("same")
 
-	_, op1, _ := s.StageObjectWrite(data)
-	_, op2, _ := s.StageObjectWrite(data)
+	_, op1, err := s.StageObjectWrite(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, op2, err := s.StageObjectWrite(data)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := op1.Commit(); err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"log"
@@ -739,7 +740,7 @@ func TestSyncInitReturnsAutoMergePayloadForCleanTextCandidate(t *testing.T) {
 }
 
 func TestFilePutAutoMergeSuccessCreatesVersionAndDownloadsMerged(t *testing.T) {
-	h, _, _, _ := setupHandlerTest(t)
+	h, q, s, _ := setupHandlerTest(t)
 	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
 	seedVersionObject(t, h, "personal", "notes/a.md", "a\nserver\n", "")
 
@@ -767,6 +768,132 @@ func TestFilePutAutoMergeSuccessCreatesVersionAndDownloadsMerged(t *testing.T) {
 	}
 	if msg.Meta.ServerVersion != 3 {
 		t.Fatalf("serverVersion = %d, want 3", msg.Meta.ServerVersion)
+	}
+
+	version3, err := q.GetFileVersion("personal", "notes/a.md", 3)
+	if err != nil {
+		t.Fatalf("get version 3: %v", err)
+	}
+	objectContent, err := h.storage.ReadObject(version3.ContentRef)
+	if err != nil {
+		t.Fatalf("read version 3 object: %v", err)
+	}
+	if string(objectContent) != "local\nserver\n" {
+		t.Fatalf("version 3 object = %q, want merged text", objectContent)
+	}
+	latestContent, err := s.ReadFile("personal", "notes/a.md")
+	if err != nil {
+		t.Fatalf("read latest file: %v", err)
+	}
+	if string(latestContent) != "local\nserver\n" {
+		t.Fatalf("latest file = %q, want merged text", latestContent)
+	}
+}
+
+func TestFilePutAutoMergeSameLineConflictDoesNotCreateVersion(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "server\nb\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:     "filePut",
+		Vault:    "personal",
+		Path:     "notes/a.md",
+		Content:  "local\nb\n",
+		Encoding: "",
+		File: &FilePayload{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("a\nb\n"),
+			LocalHash:   hashString("local\nb\n"),
+		},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action != "conflict" {
+		t.Fatalf("filePutResult = %#v", msg)
+	}
+	if _, err := q.GetFileVersion("personal", "notes/a.md", 3); err != sql.ErrNoRows {
+		t.Fatalf("version 3 err = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestFilePutAutoMergeLocalHashMismatchDoesNotCreateVersionOrOverwriteLatest(t *testing.T) {
+	h, q, s, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nserver\n", "")
+	if err := s.WriteFile("personal", "notes/a.md", []byte("a\nserver\n")); err != nil {
+		t.Fatalf("write latest file: %v", err)
+	}
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:     "filePut",
+		Vault:    "personal",
+		Path:     "notes/a.md",
+		Content:  "tampered\nb\n",
+		Encoding: "",
+		File: &FilePayload{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("a\nb\n"),
+			LocalHash:   hashString("local\nb\n"),
+		},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Error == "" {
+		t.Fatalf("filePutResult = %#v, want error", msg)
+	}
+	if _, err := q.GetFileVersion("personal", "notes/a.md", 3); err != sql.ErrNoRows {
+		t.Fatalf("version 3 err = %v, want sql.ErrNoRows", err)
+	}
+	latestContent, err := s.ReadFile("personal", "notes/a.md")
+	if err != nil {
+		t.Fatalf("read latest file: %v", err)
+	}
+	if string(latestContent) != "a\nserver\n" {
+		t.Fatalf("latest file = %q, want server content", latestContent)
+	}
+}
+
+func TestFilePutAutoMergeSkipsBase64AndDoesNotCreateVersion(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nserver\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	localContent := "local\nb\n"
+	sendJSON(t, h, c, IncomingMessage{
+		Type:     "filePut",
+		Vault:    "personal",
+		Path:     "notes/a.md",
+		Content:  base64.StdEncoding.EncodeToString([]byte(localContent)),
+		Encoding: "base64",
+		File: &FilePayload{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("a\nb\n"),
+			LocalHash:   hashString(localContent),
+		},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action != "conflict" {
+		t.Fatalf("filePutResult = %#v", msg)
+	}
+	if _, err := q.GetFileVersion("personal", "notes/a.md", 3); err != sql.ErrNoRows {
+		t.Fatalf("version 3 err = %v, want sql.ErrNoRows", err)
 	}
 }
 

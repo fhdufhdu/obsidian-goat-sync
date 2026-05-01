@@ -282,6 +282,101 @@ describe("auto merge flow", () => {
     });
   });
 
+  test("syncResult applies obsidian settings conflict from server without opening modal", async () => {
+    const serverHash = await sha256("server settings");
+    const harness = await createSyncManagerHarness({
+      files: { ".obsidian/app.json": "local settings" },
+      meta: { ".obsidian/app.json": { prevServerVersion: 1, prevServerHash: "base" } },
+      dirty: [{ path: ".obsidian/app.json", baseVersion: 1, lastSeenHash: await sha256("local settings") }],
+    });
+    harness.manager["openConflictModal"] = vi.fn();
+
+    await harness.manager["handleSyncResult"]({
+      type: "syncResult",
+      conflicts: [{
+        path: ".obsidian/app.json",
+        baseVersion: 1,
+        localHash: await sha256("local settings"),
+        serverVersion: 2,
+        serverHash,
+        serverContent: "server settings",
+        isDeleted: false,
+      }],
+    });
+
+    expect(await harness.adapter.read(".obsidian/app.json")).toBe("server settings");
+    expect(harness.fileMeta.get(".obsidian/app.json")).toEqual({
+      prevServerVersion: 2,
+      prevServerHash: serverHash,
+    });
+    expect(harness.dirtyQueue.get(".obsidian/app.json")).toBeUndefined();
+    expect(harness.deleteQueue.get(".obsidian/app.json")).toBeUndefined();
+    expect(harness.manager["blockedPaths"].has(".obsidian/app.json")).toBe(false);
+    expect(harness.manager["conflictQueue"].get(".obsidian/app.json")).toBeUndefined();
+    expect(harness.manager["openConflictModal"]).not.toHaveBeenCalled();
+  });
+
+  test("filePutResult applies obsidian settings conflict from server without opening modal", async () => {
+    const serverHash = await sha256("server hotkeys");
+    const harness = await createSyncManagerHarness({
+      files: { ".obsidian/hotkeys.json": "local hotkeys" },
+      meta: { ".obsidian/hotkeys.json": { prevServerVersion: 3, prevServerHash: "old" } },
+      dirty: [{ path: ".obsidian/hotkeys.json", baseVersion: 3, lastSeenHash: await sha256("local hotkeys") }],
+    });
+    harness.manager["openConflictModal"] = vi.fn();
+
+    await harness.manager["handleFilePutResult"]({
+      type: "filePutResult",
+      path: ".obsidian/hotkeys.json",
+      action: "conflict",
+      conflict: {
+        serverVersion: 4,
+        serverHash,
+        serverContent: "server hotkeys",
+        isDeleted: false,
+      },
+    });
+
+    expect(await harness.adapter.read(".obsidian/hotkeys.json")).toBe("server hotkeys");
+    expect(harness.fileMeta.get(".obsidian/hotkeys.json")).toEqual({
+      prevServerVersion: 4,
+      prevServerHash: serverHash,
+    });
+    expect(harness.dirtyQueue.get(".obsidian/hotkeys.json")).toBeUndefined();
+    expect(harness.manager["conflictQueue"].get(".obsidian/hotkeys.json")).toBeUndefined();
+    expect(harness.manager["openConflictModal"]).not.toHaveBeenCalled();
+  });
+
+  test("fileDeleteResult applies obsidian settings delete conflict from server", async () => {
+    const harness = await createSyncManagerHarness({
+      files: { ".obsidian/snippets/foo.css": "local css" },
+      meta: { ".obsidian/snippets/foo.css": { prevServerVersion: 2, prevServerHash: "old" } },
+      deleted: [{ path: ".obsidian/snippets/foo.css", baseVersion: 2, serverHash: "old" }],
+    });
+    harness.manager["openConflictModal"] = vi.fn();
+
+    await harness.manager["handleFileDeleteResult"]({
+      type: "fileDeleteResult",
+      path: ".obsidian/snippets/foo.css",
+      action: "deleteConflict",
+      conflict: {
+        serverVersion: 5,
+        serverHash: "deleted-hash",
+        serverContent: "",
+        isDeleted: true,
+      },
+    });
+
+    expect(await harness.adapter.exists(".obsidian/snippets/foo.css")).toBe(false);
+    expect(harness.fileMeta.get(".obsidian/snippets/foo.css")).toEqual({
+      prevServerVersion: 5,
+      prevServerHash: "deleted-hash",
+    });
+    expect(harness.deleteQueue.get(".obsidian/snippets/foo.css")).toBeUndefined();
+    expect(harness.manager["conflictQueue"].get(".obsidian/snippets/foo.css")).toBeUndefined();
+    expect(harness.manager["openConflictModal"]).not.toHaveBeenCalled();
+  });
+
   test("flushDirtyQueue skips merge-in-flight entry and flushes later dirty entries", async () => {
     const aHash = await sha256("a");
     const bHash = await sha256("b");

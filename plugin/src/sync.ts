@@ -10,6 +10,7 @@ import { SelfWriteSuppress } from "./self-write-suppress";
 import { ConflictModal } from "./conflict-modal";
 import { SyncOrchestrator, FlushResult } from "./sync-orchestrator";
 import { sha256 } from "./hash";
+import { isServerWinsPath, isSyncExcludedPath } from "./path-policy";
 
 const BINARY_EXTENSIONS = new Set([
   "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp",
@@ -153,6 +154,7 @@ export class SyncManager {
     }
 
     for (const [path, meta] of this.fileMeta.entries()) {
+      if (isSyncExcludedPath(path)) continue;
       if (localPaths.has(path) || this.blockedPaths.has(path)) continue;
       files.push({
         path,
@@ -240,10 +242,18 @@ export class SyncManager {
     }
 
     if (msg.conflicts && msg.conflicts.length > 0) {
+      let hasQueuedConflict = false;
       for (const c of msg.conflicts) {
-        await this.enqueueConflict(c);
+        if (isServerWinsPath(c.path)) {
+          await this.applyServerWinsConflict(c);
+        } else {
+          await this.enqueueConflict(c);
+          hasQueuedConflict = true;
+        }
       }
-      this.openConflictModal();
+      if (hasQueuedConflict) {
+        this.openConflictModal();
+      }
     }
   }
 
@@ -280,6 +290,7 @@ export class SyncManager {
       const sentHash = entry?.sentHash || entry?.lastSeenHash || "";
       await this.applyMergeDownloadResult(msg, sentHash);
     } else if ((msg.action === "conflict" || msg.action === "deleteConflict") && msg.conflict) {
+      if (await this.applyServerWinsLatestConflict(msg)) return;
       await this.dirtyQueue.remove(msg.path);
       this.blockedPaths.block({
         path: msg.path,
@@ -305,6 +316,7 @@ export class SyncManager {
       });
       await this.deleteQueue.remove(msg.path);
     } else if (msg.action === "deleteConflict" && msg.conflict) {
+      if (await this.applyServerWinsLatestConflict(msg)) return;
       await this.deleteQueue.remove(msg.path);
       this.blockedPaths.block({
         path: msg.path,
@@ -359,6 +371,7 @@ export class SyncManager {
       case "conflict":
       case "deleteConflict":
         if (msg.conflict) {
+          if (await this.applyServerWinsLatestConflict(msg)) return;
           await this.enqueueLatestConflict(msg);
         }
         break;
@@ -426,6 +439,7 @@ export class SyncManager {
         return;
       }
       if ((msg.action === "conflict" || msg.action === "deleteConflict") && msg.conflict) {
+        if (await this.applyServerWinsLatestConflict(msg)) return;
         await this.dirtyQueue.remove(msg.path);
         this.blockedPaths.block({
           path: msg.path,
@@ -546,6 +560,50 @@ export class SyncManager {
       prevServerVersion: entry.currentServerVersion,
       prevServerHash: entry.currentServerHash,
     });
+  }
+
+  private async applyServerWinsConflict(c: SyncConflictEntry): Promise<void> {
+    if (c.isDeleted) {
+      await this.applyServerDelete(c.path, c.serverVersion, c.serverHash);
+    } else {
+      await this.applyDownloadEntry({
+        path: c.path,
+        content: c.serverContent,
+        serverVersion: c.serverVersion,
+        serverHash: c.serverHash,
+        encoding: c.encoding,
+      });
+    }
+    await this.clearTransientState(c.path);
+  }
+
+  private async applyServerWinsLatestConflict(msg: ServerMessage): Promise<boolean> {
+    if (!msg.path || !msg.conflict || !isServerWinsPath(msg.path)) return false;
+
+    if (msg.conflict.isDeleted || msg.action === "deleteConflict") {
+      await this.applyServerDelete(
+        msg.path,
+        msg.conflict.serverVersion,
+        msg.conflict.serverHash,
+      );
+    } else {
+      await this.applyDownloadEntry({
+        path: msg.path,
+        content: msg.conflict.serverContent,
+        serverVersion: msg.conflict.serverVersion,
+        serverHash: msg.conflict.serverHash,
+        encoding: msg.conflict.encoding,
+      });
+    }
+    await this.clearTransientState(msg.path);
+    return true;
+  }
+
+  private async clearTransientState(path: string): Promise<void> {
+    await this.dirtyQueue.remove(path);
+    await this.deleteQueue.remove(path);
+    this.blockedPaths.clear(path);
+    this.conflictQueue.remove(path);
   }
 
   private async enqueueConflict(c: SyncConflictEntry): Promise<void> {

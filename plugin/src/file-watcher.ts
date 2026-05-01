@@ -1,8 +1,5 @@
 import { Vault, TFile, TAbstractFile } from "obsidian";
-
-function isExcluded(path: string): boolean {
-  return path === ".obsidian/plugins" || path.startsWith(".obsidian/plugins/");
-}
+import { isSyncExcludedPath } from "./path-policy";
 
 export interface FileChange {
   type: "create" | "modify" | "delete";
@@ -26,19 +23,19 @@ export class FileWatcher {
 
   start() {
     const onCreate = (file: TAbstractFile) => {
-      if (file instanceof TFile && !isExcluded(file.path)) {
+      if (file instanceof TFile && !isSyncExcludedPath(file.path)) {
         this.scheduleChange({ type: "create", path: file.path });
       }
     };
 
     const onModify = (file: TAbstractFile) => {
-      if (file instanceof TFile && !isExcluded(file.path)) {
+      if (file instanceof TFile && !isSyncExcludedPath(file.path)) {
         this.scheduleChange({ type: "modify", path: file.path });
       }
     };
 
     const onDelete = (file: TAbstractFile) => {
-      if (file instanceof TFile && !isExcluded(file.path)) {
+      if (file instanceof TFile && !isSyncExcludedPath(file.path)) {
         this.scheduleChange({ type: "delete", path: file.path });
       }
     };
@@ -85,14 +82,14 @@ export class FileWatcher {
   private async listRecursive(dir: string, result: { path: string }[]) {
     const listing = await this.vault.adapter.list(dir);
     for (const filePath of listing.files) {
-      if (isExcluded(filePath)) continue;
+      if (isSyncExcludedPath(filePath)) continue;
       const stat = await this.vault.adapter.stat(filePath);
       if (stat && stat.type === "file") {
         result.push({ path: filePath });
       }
     }
     for (const folder of listing.folders) {
-      if (isExcluded(folder)) continue;
+      if (isSyncExcludedPath(folder)) continue;
       await this.listRecursive(folder, result);
     }
   }

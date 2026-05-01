@@ -44,6 +44,7 @@ export class ConflictModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("obsidian-goat-sync-conflict-modal");
+    this.modalEl.addClass("obsidian-goat-sync-conflict-modal-shell");
 
     const header = contentEl.createEl("h2", { text: "Sync Conflicts" });
     header.addClass("obsidian-goat-sync-conflict-title");
@@ -324,6 +325,7 @@ export class ConflictModal extends Modal {
   }
 
   onClose() {
+    this.modalEl.removeClass("obsidian-goat-sync-conflict-modal-shell");
     this.contentEl.empty();
   }
 }

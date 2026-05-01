@@ -16,22 +16,27 @@ func TestOpen(t *testing.T) {
 	}
 	defer database.Close()
 
-	for _, table := range []string{"vaults", "files", "tokens", "github_configs"} {
-		var tableName string
-		err = database.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&tableName)
-		if err != nil {
-			t.Fatalf("%s table not created: %v", table, err)
+	for _, table := range []string{"vaults", "file_versions", "tokens", "github_configs"} {
+		var name string
+		if err := database.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name); err != nil {
+			t.Fatalf("missing table %s: %v", table, err)
 		}
 	}
 
-	var col string
-	err = database.QueryRow("SELECT name FROM pragma_table_info('files') WHERE name='version'").Scan(&col)
-	if err != nil {
-		t.Fatal("files table missing 'version' column")
+	var pk int
+	if err := database.QueryRow("SELECT pk FROM pragma_table_info('file_versions') WHERE name='id'").Scan(&pk); err != nil || pk != 1 {
+		t.Fatalf("file_versions.id is not primary key: pk=%d err=%v", pk, err)
 	}
-	err = database.QueryRow("SELECT name FROM pragma_table_info('files') WHERE name='hash'").Scan(&col)
-	if err != nil {
-		t.Fatal("files table missing 'hash' column")
+
+	var uniqueCount int
+	err = database.QueryRow(`
+		SELECT COUNT(*)
+		FROM pragma_index_list('file_versions') il
+		JOIN pragma_index_info(il.name) ii ON true
+		WHERE il.[unique] = 1 AND ii.name IN ('vault_name', 'path', 'version')
+	`).Scan(&uniqueCount)
+	if err != nil || uniqueCount < 3 {
+		t.Fatalf("missing unique index on vault_name/path/version: count=%d err=%v", uniqueCount, err)
 	}
 }
 

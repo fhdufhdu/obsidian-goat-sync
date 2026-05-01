@@ -11,15 +11,16 @@ type FilePayload struct {
 }
 
 type IncomingMessage struct {
-	Type       string        `json:"type"`
-	Vault      string        `json:"vault"`
-	Path       string        `json:"path,omitempty"`
-	Content    string        `json:"content,omitempty"`
-	Encoding   string        `json:"encoding,omitempty"`
-	File       *FilePayload  `json:"file,omitempty"`
-	Files      []FilePayload `json:"files,omitempty"`
-	Resolution string        `json:"resolution,omitempty"`
-	Action     string        `json:"action,omitempty"`
+	Type                  string        `json:"type"`
+	Vault                 string        `json:"vault"`
+	Path                  string        `json:"path,omitempty"`
+	Content               string        `json:"content,omitempty"`
+	Encoding              string        `json:"encoding,omitempty"`
+	File                  *FilePayload  `json:"file,omitempty"`
+	Files                 []FilePayload `json:"files,omitempty"`
+	ExpectedServerVersion *int64        `json:"expectedServerVersion,omitempty"`
+	Resolution            string        `json:"resolution,omitempty"`
+	Action                string        `json:"action,omitempty"`
 }
 
 type ServerMetaPayload struct {
@@ -32,6 +33,16 @@ type ServerMetaPayload struct {
 type DownloadEntry struct {
 	Path          string `json:"path"`
 	Content       string `json:"content"`
+	ServerVersion int64  `json:"serverVersion"`
+	ServerHash    string `json:"serverHash"`
+	Encoding      string `json:"encoding,omitempty"`
+}
+
+type AutoMergeEntry struct {
+	Path          string `json:"path"`
+	BaseVersion   int64  `json:"baseVersion"`
+	BaseHash      string `json:"baseHash"`
+	LocalHash     string `json:"localHash"`
 	ServerVersion int64  `json:"serverVersion"`
 	ServerHash    string `json:"serverHash"`
 	Encoding      string `json:"encoding,omitempty"`
@@ -70,6 +81,7 @@ type OutgoingMessage struct {
 	Meta          *ServerMetaPayload  `json:"meta,omitempty"`
 	Conflict      *ConflictInfo       `json:"conflict,omitempty"`
 	ToDownload    []DownloadEntry     `json:"toDownload,omitempty"`
+	ToAutoMerge   []AutoMergeEntry    `json:"toAutoMerge,omitempty"`
 	ToUpdateMeta  []ServerMetaPayload `json:"toUpdateMeta,omitempty"`
 	ToDeleteLocal []ServerMetaPayload `json:"toDeleteLocal,omitempty"`
 	ToRemoveMeta  []ServerMetaPayload `json:"toRemoveMeta,omitempty"`

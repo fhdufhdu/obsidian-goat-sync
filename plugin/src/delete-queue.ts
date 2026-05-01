@@ -55,11 +55,27 @@ export class DeleteQueue {
     });
   }
 
+  async rebase(path: string, input: { baseVersion: number; serverHash: string }): Promise<void> {
+    await this.mutex.runExclusive(async () => {
+      const existing = this.entries.get(path);
+      if (!existing) return;
+      existing.baseVersion = input.baseVersion;
+      existing.serverHash = input.serverHash;
+      existing.status = "pending";
+      await this.saveLocked();
+    });
+  }
+
   async remove(path: string): Promise<void> {
     await this.mutex.runExclusive(async () => {
       this.entries.delete(path);
       await this.saveLocked();
     });
+  }
+
+  get(path: string): DeleteEntry | undefined {
+    const entry = this.entries.get(path);
+    return entry ? { ...entry } : undefined;
   }
 
   list(): DeleteEntry[] {

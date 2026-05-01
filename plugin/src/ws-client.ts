@@ -21,11 +21,22 @@ export interface DownloadEntry {
   encoding?: string;
 }
 
+export interface AutoMergeEntry {
+  path: string;
+  baseVersion: number;
+  baseHash: string;
+  localHash: string;
+  serverVersion: number;
+  serverHash: string;
+  encoding?: string;
+}
+
 export type ServerAction =
   | "toPut" | "toUpdateMeta" | "toDownload" | "toDeleteLocal" | "toRemoveMeta"
   | "none" | "conflict" | "deleteConflict"
   | "put" | "updateMeta" | "upToDate"
-  | "okUpdateMeta" | "okRemoveMeta";
+  | "okUpdateMeta" | "okRemoveMeta"
+  | "autoMergeRequired";
 
 export interface UpdateMetaEntry {
   path: string;
@@ -71,6 +82,7 @@ export interface ServerMessage {
   toUpdateMeta?: ServerMetaPayload[];
   toDeleteLocal?: ServerMetaPayload[];
   toRemoveMeta?: ServerMetaPayload[];
+  toAutoMerge?: AutoMergeEntry[];
   conflicts?: SyncConflictEntry[];
   meta?: ServerMetaPayload;
   error?: string;
@@ -84,6 +96,19 @@ export function buildSyncInitMessage(vault: string, files: FilePayload[]) {
 
 export function buildFilePutMessage(vault: string, path: string, content: string, file: FilePayload, encoding?: string) {
   const msg: Record<string, unknown> = { type: "filePut", vault, path, content, file };
+  if (encoding) msg.encoding = encoding;
+  return msg;
+}
+
+export function buildMergePutMessage(
+  vault: string,
+  path: string,
+  content: string,
+  file: FilePayload,
+  expectedServerVersion: number,
+  encoding?: string,
+) {
+  const msg: Record<string, unknown> = { type: "mergePut", vault, path, content, file, expectedServerVersion };
   if (encoding) msg.encoding = encoding;
   return msg;
 }
@@ -205,6 +230,17 @@ export class WsClient {
 
   sendFilePut(vault: string, path: string, content: string, file: FilePayload, encoding?: string): boolean {
     return this.send(buildFilePutMessage(vault, path, content, file, encoding));
+  }
+
+  sendMergePut(
+    vault: string,
+    path: string,
+    content: string,
+    file: FilePayload,
+    expectedServerVersion: number,
+    encoding?: string,
+  ): boolean {
+    return this.send(buildMergePutMessage(vault, path, content, file, expectedServerVersion, encoding));
   }
 
   sendFileDelete(vault: string, file: FilePayload): boolean {

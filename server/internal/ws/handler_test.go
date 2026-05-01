@@ -2,6 +2,10 @@ package ws
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"os"
@@ -30,6 +34,11 @@ func setupHandler(t *testing.T) (*Handler, *db.Queries, *storage.Storage, string
 	return h, q, s, dir
 }
 
+func setupHandlerTest(t *testing.T) (*Handler, *db.Queries, *storage.Storage, string) {
+	t.Helper()
+	return setupHandler(t)
+}
+
 func makeClient(hub *Hub, vault string) *Client {
 	return &Client{
 		hub:   hub,
@@ -48,7 +57,51 @@ func readResponse(t *testing.T, c *Client) OutgoingMessage {
 	return msg
 }
 
+func sendJSON(t *testing.T, h *Handler, c *Client, msg IncomingMessage) {
+	t.Helper()
+	h.HandleMessage(c, mustJSON(msg))
+}
+
+func lastMessage(t *testing.T, c *Client) OutgoingMessage {
+	t.Helper()
+	return readResponse(t, c)
+}
+
+func hashString(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
 func int64Ptr(v int64) *int64 { return &v }
+
+func seedVersionObject(t *testing.T, h *Handler, vault, path, content, encoding string) db.File {
+	t.Helper()
+	if err := h.queries.EnsureVault(vault); err != nil {
+		t.Fatalf("ensure vault: %v", err)
+	}
+	ref, op, err := h.storage.StageObjectWrite([]byte(content))
+	if err != nil {
+		t.Fatalf("stage object: %v", err)
+	}
+	if err := op.Commit(); err != nil {
+		t.Fatalf("commit object: %v", err)
+	}
+	hash := hashString(content)
+	if _, err := h.queries.GetFile(vault, path); err == sql.ErrNoRows {
+		f, err := h.queries.CreateFile(vault, path, hash, ref, encoding)
+		if err != nil {
+			t.Fatalf("create file version: %v", err)
+		}
+		return f
+	} else if err != nil {
+		t.Fatalf("get latest file: %v", err)
+	}
+	f, err := h.queries.UpdateFile(vault, path, hash, ref, encoding)
+	if err != nil {
+		t.Fatalf("update file version: %v", err)
+	}
+	return f
+}
 
 func assertResponseMetaVersion(t *testing.T, resp OutgoingMessage, want int64) {
 	t.Helper()
@@ -105,6 +158,88 @@ func assertNoGoatSyncTrash(t *testing.T, dir, relativeDir string) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("expected no lingering trash files, got %d", len(entries))
+	}
+}
+
+func TestMergePutMessageShape(t *testing.T) {
+	raw := []byte(`{"type":"mergePut","vault":"personal","path":"notes/a.md","content":"local","expectedServerVersion":2,"file":{"path":"notes/a.md","exists":true,"baseVersion":1,"baseHash":"base","localHash":"local"}}`)
+	msg, err := UnmarshalMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.ExpectedServerVersion == nil || *msg.ExpectedServerVersion != 2 {
+		t.Fatalf("expectedServerVersion = %#v", msg.ExpectedServerVersion)
+	}
+}
+
+func TestHandleMessageAcceptsMergePutType(t *testing.T) {
+	h, _, _, _ := setupHandler(t)
+	client := makeClient(h.hub, "personal")
+	h.HandleMessage(client, []byte(`{"type":"mergePut","vault":"personal","path":"notes/a.md","expectedServerVersion":1,"file":{"path":"notes/a.md","exists":true,"baseVersion":1,"localHash":"local"},"content":"local"}`))
+	msg := readResponse(t, client)
+	if msg.Type != "mergePutResult" {
+		t.Fatalf("message = %#v", msg)
+	}
+}
+
+func TestMergePutSuccessReturnsToDownload(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nserver\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:                  "mergePut",
+		Vault:                 "personal",
+		Path:                  "notes/a.md",
+		Content:               "local\nb\n",
+		ExpectedServerVersion: int64Ptr(2),
+		File:                  &FilePayload{Path: "notes/a.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: hashString("a\nb\n"), LocalHash: hashString("local\nb\n")},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Type != "mergePutResult" || msg.Action != "toDownload" || msg.Content != "local\nserver\n" {
+		t.Fatalf("mergePutResult = %#v", msg)
+	}
+	if msg.Meta == nil || msg.Meta.ServerVersion != 3 {
+		t.Fatalf("mergePutResult meta = %#v", msg.Meta)
+	}
+	latest, err := q.GetFileVersion("personal", "notes/a.md", 3)
+	if err != nil {
+		t.Fatalf("get merged version: %v", err)
+	}
+	content, err := h.storage.ReadObject(latest.ContentRef)
+	if err != nil {
+		t.Fatalf("read merged object: %v", err)
+	}
+	if string(content) != "local\nserver\n" {
+		t.Fatalf("stored merged content = %q", content)
+	}
+}
+
+func TestMergePutLatestGreaterThanExpectedReturnsAutoMergeRequired(t *testing.T) {
+	h, _, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "base", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "server2", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "server3", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:                  "mergePut",
+		Vault:                 "personal",
+		Path:                  "notes/a.md",
+		Content:               "local",
+		ExpectedServerVersion: int64Ptr(2),
+		File:                  &FilePayload{Path: "notes/a.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: hashString("base"), LocalHash: hashString("local")},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Type != "mergePutResult" || msg.Action != "autoMergeRequired" || msg.Meta == nil || msg.Meta.ServerVersion != 3 {
+		t.Fatalf("mergePutResult = %#v", msg)
 	}
 }
 
@@ -169,7 +304,7 @@ func TestHandleSyncInit_WithPrev_SameVersion_DiffHash_ToUpdate(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "hash1")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -198,7 +333,7 @@ func TestHandleSyncInit_Tombstone_ToDelete(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/old.md", []byte("old content"))
-	q.CreateFile("personal", "notes/old.md", "hash1")
+	q.CreateFile("personal", "notes/old.md", "hash1", "", "")
 	q.DeleteFile("personal", "notes/old.md")
 
 	c := makeClient(h.hub, "personal")
@@ -297,7 +432,7 @@ func TestHandleFilePutDoesNotLeaveFileWhenDBMetadataFails(t *testing.T) {
 	go hub.Run()
 	h := NewHandler(q, s, hub)
 
-	_, err = database.Exec(`CREATE TRIGGER fail_file_create BEFORE INSERT ON files WHEN NEW.vault_name = 'personal' AND NEW.path = 'notes/bad.md' BEGIN SELECT RAISE(ABORT, 'forced metadata failure'); END;`)
+	_, err = database.Exec(`CREATE TRIGGER fail_file_create BEFORE INSERT ON file_versions WHEN NEW.vault_name = 'personal' AND NEW.path = 'notes/bad.md' BEGIN SELECT RAISE(ABORT, 'forced metadata failure'); END;`)
 	if err != nil {
 		t.Fatalf("create trigger: %v", err)
 	}
@@ -395,11 +530,467 @@ func TestHandleFilePutCreatesMissingVault(t *testing.T) {
 	}
 }
 
+func TestFilePutStoresHistoricalObjectRefs(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:    "filePut",
+		Vault:   "personal",
+		Path:    "notes/history.md",
+		Content: "one",
+		File: &FilePayload{
+			Path:      "notes/history.md",
+			Exists:    true,
+			LocalHash: hashString("one"),
+		},
+	})
+	resp := lastMessage(t, c)
+	if resp.Type != "filePutResult" || resp.Action != "okUpdateMeta" {
+		t.Fatalf("expected initial okUpdateMeta, got %#v", resp)
+	}
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:    "filePut",
+		Vault:   "personal",
+		Path:    "notes/history.md",
+		Content: "two",
+		File: &FilePayload{
+			Path:        "notes/history.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			LocalHash:   hashString("two"),
+		},
+	})
+	resp = lastMessage(t, c)
+	if resp.Type != "filePutResult" || resp.Action != "okUpdateMeta" {
+		t.Fatalf("expected update okUpdateMeta, got %#v", resp)
+	}
+
+	base, err := q.GetFileVersion("personal", "notes/history.md", 1)
+	if err != nil {
+		t.Fatalf("get base version: %v", err)
+	}
+	content, err := h.storage.ReadObject(base.ContentRef)
+	if err != nil {
+		t.Fatalf("read version 1 object %q: %v", base.ContentRef, err)
+	}
+	if string(content) != "one" {
+		t.Fatalf("version 1 object content = %q, want %q", content, "one")
+	}
+}
+
+func TestReadFileContentDoesNotFallbackWhenContentRefMissing(t *testing.T) {
+	h, _, s, _ := setupHandlerTest(t)
+	if err := s.WriteFile("personal", "notes/history.md", []byte("latest")); err != nil {
+		t.Fatalf("write latest file: %v", err)
+	}
+
+	content, err := h.readFileContent("personal", db.File{
+		Path:       "notes/history.md",
+		ContentRef: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	})
+	if err == nil {
+		t.Fatalf("expected missing object error, got content %q", content)
+	}
+}
+
+func TestSyncInitDownloadsWhenLocalEqualsBaseAndServerAdvanced(t *testing.T) {
+	h, _, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "base", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "server", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:  "syncInit",
+		Vault: "personal",
+		Files: []FilePayload{{
+			Path: "notes/a.md", Exists: true,
+			BaseVersion: int64Ptr(1), BaseHash: hashString("base"), LocalHash: hashString("base"),
+		}},
+	})
+
+	msg := lastMessage(t, c)
+	if len(msg.ToDownload) != 1 || msg.ToDownload[0].Content != "server" {
+		t.Fatalf("syncResult = %#v", msg)
+	}
+	if len(msg.Conflicts) != 0 {
+		t.Fatalf("unexpected conflicts: %#v", msg.Conflicts)
+	}
+}
+
+func TestFileCheckReturnsAutoMergeRequiredForCleanTextCandidate(t *testing.T) {
+	h, _, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nB-server\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type: "fileCheck", Vault: "personal", Path: "notes/a.md",
+		File: &FilePayload{Path: "notes/a.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: hashString("a\nb\n"), LocalHash: hashString("A-local\nb\n")},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action != "autoMergeRequired" || msg.Meta == nil || msg.Meta.ServerVersion != 2 {
+		t.Fatalf("fileCheckResult = %#v", msg)
+	}
+}
+
+func TestFileCheckDoesNotAutoMergeWhenBaseObjectMissing(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	if err := q.EnsureVault("personal"); err != nil {
+		t.Fatalf("ensure vault: %v", err)
+	}
+	if _, err := q.CreateFile("personal", "notes/a.md", hashString("a\nb\n"), "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ""); err != nil {
+		t.Fatalf("create base version: %v", err)
+	}
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nB-server\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type: "fileCheck", Vault: "personal", Path: "notes/a.md",
+		File: &FilePayload{Path: "notes/a.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: hashString("a\nb\n"), LocalHash: hashString("A-local\nb\n")},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action == "autoMergeRequired" || msg.Action == "autoMerge" {
+		t.Fatalf("fileCheckResult must not advertise unreadable auto-merge: %#v", msg)
+	}
+	if msg.Action != "conflict" {
+		t.Fatalf("fileCheckResult = %#v", msg)
+	}
+}
+
+func TestFileCheckDoesNotAutoMergeWhenServerObjectMissing(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	if _, err := q.UpdateFile("personal", "notes/a.md", hashString("a\nB-server\n"), "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ""); err != nil {
+		t.Fatalf("create server version: %v", err)
+	}
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type: "fileCheck", Vault: "personal", Path: "notes/a.md",
+		File: &FilePayload{Path: "notes/a.md", Exists: true, BaseVersion: int64Ptr(1), BaseHash: hashString("a\nb\n"), LocalHash: hashString("A-local\nb\n")},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action == "autoMergeRequired" || msg.Action == "autoMerge" {
+		t.Fatalf("fileCheckResult must not advertise unreadable auto-merge: %#v", msg)
+	}
+	if msg.Action != "conflict" || msg.Error == "" {
+		t.Fatalf("fileCheckResult = %#v", msg)
+	}
+}
+
+func TestSyncInitDoesNotAutoMergeWhenBaseObjectMissing(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	if err := q.EnsureVault("personal"); err != nil {
+		t.Fatalf("ensure vault: %v", err)
+	}
+	if _, err := q.CreateFile("personal", "notes/a.md", hashString("a\nb\n"), "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ""); err != nil {
+		t.Fatalf("create base version: %v", err)
+	}
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nB-server\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:  "syncInit",
+		Vault: "personal",
+		Files: []FilePayload{{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("a\nb\n"),
+			LocalHash:   hashString("A-local\nb\n"),
+		}},
+	})
+
+	msg := lastMessage(t, c)
+	if len(msg.ToAutoMerge) != 0 {
+		t.Fatalf("syncResult must not advertise unreadable auto-merge: %#v", msg.ToAutoMerge)
+	}
+	if len(msg.Conflicts) != 1 {
+		t.Fatalf("syncResult = %#v", msg)
+	}
+}
+
+func TestSyncInitReturnsActionableResponseWhenServerObjectMissing(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	if _, err := q.UpdateFile("personal", "notes/a.md", hashString("a\nB-server\n"), "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ""); err != nil {
+		t.Fatalf("create server version: %v", err)
+	}
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:  "syncInit",
+		Vault: "personal",
+		Files: []FilePayload{{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("a\nb\n"),
+			LocalHash:   hashString("A-local\nb\n"),
+		}},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Type == "error" && msg.Error != "" {
+		return
+	}
+	if len(msg.Conflicts) != 0 {
+		return
+	}
+	if len(msg.ToAutoMerge) == 0 && len(msg.ToDownload) == 0 && len(msg.ToPut) == 0 &&
+		len(msg.ToUpdateMeta) == 0 && len(msg.ToDeleteLocal) == 0 && len(msg.ToRemoveMeta) == 0 &&
+		msg.Error == "" {
+		t.Fatalf("syncResult must not be silently empty for unreadable conflict: %#v", msg)
+	}
+	t.Fatalf("syncResult must surface unreadable conflict explicitly: %#v", msg)
+}
+
+func TestSyncInitReturnsAutoMergePayloadForCleanTextCandidate(t *testing.T) {
+	h, _, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "utf-8")
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nB-server\n", "utf-8")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	localHash := hashString("A-local\nb\n")
+	sendJSON(t, h, c, IncomingMessage{
+		Type:  "syncInit",
+		Vault: "personal",
+		Files: []FilePayload{{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    "client-stale-base-hash",
+			LocalHash:   localHash,
+		}},
+	})
+
+	msg := lastMessage(t, c)
+	if len(msg.ToAutoMerge) != 1 {
+		t.Fatalf("syncResult = %#v", msg)
+	}
+	entry := msg.ToAutoMerge[0]
+	if entry.Path != "notes/a.md" ||
+		entry.BaseVersion != 1 ||
+		entry.BaseHash != hashString("a\nb\n") ||
+		entry.LocalHash != localHash ||
+		entry.ServerVersion != 2 ||
+		entry.ServerHash != hashString("a\nB-server\n") ||
+		entry.Encoding != "utf-8" {
+		t.Fatalf("toAutoMerge[0] = %#v", entry)
+	}
+}
+
+func TestFilePutAutoMergeSuccessCreatesVersionAndDownloadsMerged(t *testing.T) {
+	h, q, s, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nserver\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:     "filePut",
+		Vault:    "personal",
+		Path:     "notes/a.md",
+		Content:  "local\nb\n",
+		Encoding: "",
+		File: &FilePayload{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("a\nb\n"),
+			LocalHash:   hashString("local\nb\n"),
+		},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action != "toDownload" || msg.Content != "local\nserver\n" {
+		t.Fatalf("filePutResult = %#v", msg)
+	}
+	if msg.Meta.ServerVersion != 3 {
+		t.Fatalf("serverVersion = %d, want 3", msg.Meta.ServerVersion)
+	}
+
+	version3, err := q.GetFileVersion("personal", "notes/a.md", 3)
+	if err != nil {
+		t.Fatalf("get version 3: %v", err)
+	}
+	objectContent, err := h.storage.ReadObject(version3.ContentRef)
+	if err != nil {
+		t.Fatalf("read version 3 object: %v", err)
+	}
+	if string(objectContent) != "local\nserver\n" {
+		t.Fatalf("version 3 object = %q, want merged text", objectContent)
+	}
+	latestContent, err := s.ReadFile("personal", "notes/a.md")
+	if err != nil {
+		t.Fatalf("read latest file: %v", err)
+	}
+	if string(latestContent) != "local\nserver\n" {
+		t.Fatalf("latest file = %q, want merged text", latestContent)
+	}
+}
+
+func TestFilePutAutoMergeSameLineConflictDoesNotCreateVersion(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "server\nb\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:     "filePut",
+		Vault:    "personal",
+		Path:     "notes/a.md",
+		Content:  "local\nb\n",
+		Encoding: "",
+		File: &FilePayload{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("a\nb\n"),
+			LocalHash:   hashString("local\nb\n"),
+		},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action != "conflict" {
+		t.Fatalf("filePutResult = %#v", msg)
+	}
+	if _, err := q.GetFileVersion("personal", "notes/a.md", 3); err != sql.ErrNoRows {
+		t.Fatalf("version 3 err = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestFilePutAutoMergeLocalHashMismatchDoesNotCreateVersionOrOverwriteLatest(t *testing.T) {
+	h, q, s, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nserver\n", "")
+	if err := s.WriteFile("personal", "notes/a.md", []byte("a\nserver\n")); err != nil {
+		t.Fatalf("write latest file: %v", err)
+	}
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:     "filePut",
+		Vault:    "personal",
+		Path:     "notes/a.md",
+		Content:  "tampered\nb\n",
+		Encoding: "",
+		File: &FilePayload{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("a\nb\n"),
+			LocalHash:   hashString("local\nb\n"),
+		},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Error == "" {
+		t.Fatalf("filePutResult = %#v, want error", msg)
+	}
+	if _, err := q.GetFileVersion("personal", "notes/a.md", 3); err != sql.ErrNoRows {
+		t.Fatalf("version 3 err = %v, want sql.ErrNoRows", err)
+	}
+	latestContent, err := s.ReadFile("personal", "notes/a.md")
+	if err != nil {
+		t.Fatalf("read latest file: %v", err)
+	}
+	if string(latestContent) != "a\nserver\n" {
+		t.Fatalf("latest file = %q, want server content", latestContent)
+	}
+}
+
+func TestFilePutAutoMergeSkipsBase64AndDoesNotCreateVersion(t *testing.T) {
+	h, q, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nb\n", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "a\nserver\n", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	localContent := "local\nb\n"
+	sendJSON(t, h, c, IncomingMessage{
+		Type:     "filePut",
+		Vault:    "personal",
+		Path:     "notes/a.md",
+		Content:  base64.StdEncoding.EncodeToString([]byte(localContent)),
+		Encoding: "base64",
+		File: &FilePayload{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("a\nb\n"),
+			LocalHash:   hashString(localContent),
+		},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action != "conflict" {
+		t.Fatalf("filePutResult = %#v", msg)
+	}
+	if _, err := q.GetFileVersion("personal", "notes/a.md", 3); err != sql.ErrNoRows {
+		t.Fatalf("version 3 err = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestFilePutReturnsDownloadWhenLocalEqualsBaseAndServerAdvanced(t *testing.T) {
+	h, _, _, _ := setupHandlerTest(t)
+	seedVersionObject(t, h, "personal", "notes/a.md", "base", "")
+	seedVersionObject(t, h, "personal", "notes/a.md", "server", "")
+
+	c := makeClient(h.hub, "personal")
+	h.hub.Register <- c
+
+	sendJSON(t, h, c, IncomingMessage{
+		Type:    "filePut",
+		Vault:   "personal",
+		Path:    "notes/a.md",
+		Content: "base",
+		File: &FilePayload{
+			Path:        "notes/a.md",
+			Exists:      true,
+			BaseVersion: int64Ptr(1),
+			BaseHash:    hashString("base"),
+			LocalHash:   hashString("base"),
+		},
+	})
+
+	msg := lastMessage(t, c)
+	if msg.Action != "toDownload" || msg.Content != "server" || msg.Meta.ServerVersion != 2 {
+		t.Fatalf("filePutResult = %#v", msg)
+	}
+}
+
 func TestHandleSyncInit_NoPrev_ActiveSameHash(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "serverhash")
+	q.CreateFile("personal", "notes/hello.md", "serverhash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -425,7 +1016,7 @@ func TestHandleSyncInit_NoPrev_ActiveDiffHash(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("server content"))
-	q.CreateFile("personal", "notes/hello.md", "serverhash")
+	q.CreateFile("personal", "notes/hello.md", "serverhash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -448,7 +1039,7 @@ func TestHandleSyncInit_WithPrev_SameVersion_SameHash_Skip(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "hash1")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -471,8 +1062,8 @@ func TestHandleSyncInit_WithPrev_OlderVersion_SameClientHash_ToUpdateMeta(t *tes
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "hash1")
-	q.UpdateFile("personal", "notes/hello.md", "hash2")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
+	q.UpdateFile("personal", "notes/hello.md", "hash2", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -495,8 +1086,8 @@ func TestHandleSyncInit_WithPrev_OlderVersion_PrevHashEqClient_ToDownload(t *tes
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("server content"))
-	q.CreateFile("personal", "notes/hello.md", "hash1")
-	q.UpdateFile("personal", "notes/hello.md", "hash2")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
+	q.UpdateFile("personal", "notes/hello.md", "hash2", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -510,8 +1101,11 @@ func TestHandleSyncInit_WithPrev_OlderVersion_PrevHashEqClient_ToDownload(t *tes
 	}))
 
 	resp := readResponse(t, c)
-	if len(resp.Conflicts) != 1 {
-		t.Errorf("expected 1 conflict, got %v", resp.Conflicts)
+	if len(resp.ToDownload) != 1 || resp.ToDownload[0].Path != "notes/hello.md" {
+		t.Errorf("expected toDownload=[notes/hello.md], got %v", resp.ToDownload)
+	}
+	if len(resp.Conflicts) != 0 {
+		t.Errorf("expected no conflicts, got %v", resp.Conflicts)
 	}
 }
 
@@ -519,7 +1113,7 @@ func TestHandleSyncInit_ServerOnlyFile_ToDownload(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/server-only.md", []byte("server content"))
-	q.CreateFile("personal", "notes/server-only.md", "serverhash")
+	q.CreateFile("personal", "notes/server-only.md", "serverhash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -575,7 +1169,7 @@ func TestHandleFileCheck_UpToDate(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "samehash")
+	q.CreateFile("personal", "notes/hello.md", "samehash", "", "")
 	base := int64(1)
 
 	c := makeClient(h.hub, "personal")
@@ -603,7 +1197,7 @@ func TestHandleFileCheck_UpdateMeta(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	sf, err := q.CreateFile("personal", "notes/hello.md", "hash1")
+	sf, err := q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
 	if err != nil {
 		t.Fatalf("create file: %v", err)
 	}
@@ -637,11 +1231,11 @@ func TestHandleFileCheck_Put(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	sf, err := q.CreateFile("personal", "notes/hello.md", "oldhash")
+	sf, err := q.CreateFile("personal", "notes/hello.md", "oldhash", "", "")
 	if err != nil {
 		t.Fatalf("create file: %v", err)
 	}
-	sf, err = q.UpdateFile("personal", "notes/hello.md", "newhash")
+	sf, err = q.UpdateFile("personal", "notes/hello.md", "newhash", "", "")
 	if err != nil {
 		t.Fatalf("update file: %v", err)
 	}
@@ -677,7 +1271,7 @@ func TestHandleFileCheck_ToDeleteLocal(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/old.md", []byte("content"))
-	q.CreateFile("personal", "notes/old.md", "hash1")
+	q.CreateFile("personal", "notes/old.md", "hash1", "", "")
 	q.DeleteFile("personal", "notes/old.md")
 
 	c := makeClient(h.hub, "personal")
@@ -707,7 +1301,7 @@ func TestHandleFileCheck_Conflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/conflict.md", []byte("server"))
-	q.CreateFile("personal", "notes/conflict.md", "hash1")
+	q.CreateFile("personal", "notes/conflict.md", "hash1", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -736,7 +1330,7 @@ func TestHandleFileCheck_DeleteConflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/tomb.md", []byte("stale"))
-	q.CreateFile("personal", "notes/tomb.md", "serverhash")
+	q.CreateFile("personal", "notes/tomb.md", "serverhash", "", "")
 	q.DeleteFile("personal", "notes/tomb.md")
 	base := int64(1)
 
@@ -802,7 +1396,7 @@ func TestHandleFileCreate_ActiveConflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/existing.md", []byte("original"))
-	q.CreateFile("personal", "notes/existing.md", "originalhash")
+	q.CreateFile("personal", "notes/existing.md", "originalhash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -834,7 +1428,7 @@ func TestHandleFileCreate_TombstoneReuse(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/old.md", []byte("old"))
-	q.CreateFile("personal", "notes/old.md", "oldhash")
+	q.CreateFile("personal", "notes/old.md", "oldhash", "", "")
 	q.DeleteFile("personal", "notes/old.md")
 
 	c := makeClient(h.hub, "personal")
@@ -891,7 +1485,7 @@ func TestHandleFilePut_NewFile_OKUpdateMeta(t *testing.T) {
 func TestHandleFileDelete_TombstoneRetry_OKUpdateMeta(t *testing.T) {
 	h, q, _, _ := setupHandler(t)
 	q.CreateVault("personal")
-	q.CreateFile("personal", "notes/a.md", "hash-a")
+	q.CreateFile("personal", "notes/a.md", "hash-a", "", "")
 	deleted, err := q.DeleteFile("personal", "notes/a.md")
 	if err != nil {
 		t.Fatalf("delete setup: %v", err)
@@ -925,7 +1519,7 @@ func TestHandleFileUpdate_Success(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("old"))
-	q.CreateFile("personal", "notes/hello.md", "oldhash")
+	q.CreateFile("personal", "notes/hello.md", "oldhash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -961,7 +1555,7 @@ func TestHandleFileUpdate_Noop(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("content"))
-	q.CreateFile("personal", "notes/hello.md", "samehash")
+	q.CreateFile("personal", "notes/hello.md", "samehash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -991,8 +1585,8 @@ func TestHandleFileUpdate_Conflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("server version"))
-	q.CreateFile("personal", "notes/hello.md", "hash1")
-	q.UpdateFile("personal", "notes/hello.md", "hash2")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
+	q.UpdateFile("personal", "notes/hello.md", "hash2", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -1025,7 +1619,7 @@ func TestHandleFileDelete_Success(t *testing.T) {
 	h, q, s, dir := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/old.md", []byte("delete me"))
-	q.CreateFile("personal", "notes/old.md", "hash1")
+	q.CreateFile("personal", "notes/old.md", "hash1", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -1063,8 +1657,8 @@ func TestHandleFileDelete_Conflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("updated on server"))
-	q.CreateFile("personal", "notes/hello.md", "hash1")
-	q.UpdateFile("personal", "notes/hello.md", "hash2")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
+	q.UpdateFile("personal", "notes/hello.md", "hash2", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -1117,7 +1711,7 @@ func TestHandleConflictResolve_LocalUpdate_Success(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("server content"))
-	q.CreateFile("personal", "notes/hello.md", "serverhash")
+	q.CreateFile("personal", "notes/hello.md", "serverhash", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -1147,8 +1741,8 @@ func TestHandleConflictResolve_LocalUpdate_Success(t *testing.T) {
 func TestHandleConflictResolve_LocalUpdate_IdempotentRetryRewritesFile(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
-	q.CreateFile("personal", "notes/hello.md", "serverhash")
-	updated, err := q.UpdateFile("personal", "notes/hello.md", "localhash")
+	q.CreateFile("personal", "notes/hello.md", "serverhash", "", "")
+	updated, err := q.UpdateFile("personal", "notes/hello.md", "localhash", "", "")
 	if err != nil {
 		t.Fatalf("update setup: %v", err)
 	}
@@ -1191,8 +1785,8 @@ func TestHandleConflictResolve_LocalUpdate_Reconflict(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/hello.md", []byte("newer server"))
-	q.CreateFile("personal", "notes/hello.md", "hash1")
-	q.UpdateFile("personal", "notes/hello.md", "hash2")
+	q.CreateFile("personal", "notes/hello.md", "hash1", "", "")
+	q.UpdateFile("personal", "notes/hello.md", "hash2", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c
@@ -1222,7 +1816,7 @@ func TestHandleConflictResolve_LocalDelete_Success(t *testing.T) {
 	h, q, s, _ := setupHandler(t)
 	q.CreateVault("personal")
 	s.WriteFile("personal", "notes/old.md", []byte("content"))
-	q.CreateFile("personal", "notes/old.md", "hash1")
+	q.CreateFile("personal", "notes/old.md", "hash1", "", "")
 
 	c := makeClient(h.hub, "personal")
 	h.hub.Register <- c

@@ -36,6 +36,14 @@ const (
 	HashDifferent     HashMatch = "different"
 )
 
+type AutoMergeState string
+
+const (
+	AutoMergeNotApplicable AutoMergeState = "n/a"
+	AutoMergePossible      AutoMergeState = "possible"
+	AutoMergeImpossible    AutoMergeState = "impossible"
+)
+
 type MatrixAction string
 
 const (
@@ -50,6 +58,7 @@ const (
 	MatrixActionToRemoveMeta   MatrixAction = "toRemoveMeta"
 	MatrixActionOkRemoveMeta   MatrixAction = "okRemoveMeta"
 	MatrixActionUpToDate       MatrixAction = "upToDate"
+	MatrixActionAutoMerge      MatrixAction = "autoMerge"
 	MatrixActionConflict       MatrixAction = "conflict"
 	MatrixActionDeleteConflict MatrixAction = "deleteConflict"
 )
@@ -63,6 +72,9 @@ type DecisionInput struct {
 	ServerVersion      int64
 	ServerHash         string
 	DeletedFromVersion int64
+	BaseRowExists      bool
+	BaseHash           string
+	AutoMerge          AutoMergeState
 }
 
 type DecisionResult struct {
@@ -141,6 +153,12 @@ func decideReadOrCheck(input DecisionInput, putAction, updateMetaAction, cleanAc
 			if input.LocalHash == input.ServerHash {
 				return DecisionResult{Action: updateMetaAction}
 			}
+			if input.BaseRowExists && input.LocalHash == input.BaseHash {
+				return DecisionResult{Action: MatrixActionToDownload}
+			}
+			if input.BaseRowExists && input.AutoMerge == AutoMergePossible {
+				return DecisionResult{Action: MatrixActionAutoMerge}
+			}
 			return DecisionResult{Action: MatrixActionConflict}
 		}
 	}
@@ -209,6 +227,12 @@ func DecideFilePut(input DecisionInput) DecisionResult {
 		}
 		if input.LocalHash == input.ServerHash {
 			return DecisionResult{Action: MatrixActionOkUpdateMeta}
+		}
+		if input.BaseRowExists && input.LocalHash == input.BaseHash {
+			return DecisionResult{Action: MatrixActionToDownload}
+		}
+		if input.BaseRowExists && input.AutoMerge == AutoMergePossible {
+			return DecisionResult{Action: MatrixActionAutoMerge}
 		}
 		return DecisionResult{Action: MatrixActionConflict}
 	default:

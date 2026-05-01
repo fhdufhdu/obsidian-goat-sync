@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -187,6 +188,82 @@ func TestStageWriteRollbackRemovesTemp(t *testing.T) {
 	}
 	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
 		t.Fatalf("expected temp file removed, got %v", err)
+	}
+}
+
+func TestStageObjectWriteAndRead(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	data := []byte("hello object")
+
+	ref, op, err := s.StageObjectWrite(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref != "sha256:5cd9289a69664e69c5e2c3015062796590a2d6ed5f32fe9d4ec1f3c94636e457" {
+		t.Fatalf("ref = %s", ref)
+	}
+	if err := op.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadObject(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(data) {
+		t.Fatalf("object = %q", string(got))
+	}
+}
+
+func TestStageObjectWriteIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	data := []byte("same")
+
+	_, op1, err := s.StageObjectWrite(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, op2, err := s.StageObjectWrite(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := op1.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := op2.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadObjectRejectsInvalidRefs(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+
+	tests := []struct {
+		name string
+		ref  string
+	}{
+		{
+			name: "separator in digest",
+			ref:  "sha256:" + strings.Repeat("a", 63) + "/",
+		},
+		{
+			name: "non-hex digest",
+			ref:  "sha256:" + strings.Repeat("g", 64),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := s.ReadObject(tt.ref)
+			if err == nil {
+				t.Fatal("expected invalid ref error")
+			}
+			if !strings.Contains(err.Error(), "invalid content ref") {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 

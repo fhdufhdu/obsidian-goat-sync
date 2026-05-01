@@ -44,25 +44,23 @@ export class ConflictModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("obsidian-goat-sync-conflict-modal");
-    contentEl.style.cssText = "display:flex;flex-direction:column;height:80vh;min-width:700px;";
 
     const header = contentEl.createEl("h2", { text: "Sync Conflicts" });
-    header.style.cssText = "margin-bottom:12px;";
+    header.addClass("obsidian-goat-sync-conflict-title");
 
     const body = contentEl.createDiv();
-    body.style.cssText = "display:flex;flex:1;gap:16px;overflow:hidden;";
+    body.addClass("obsidian-goat-sync-conflict-body");
 
     this.sidebarEl = body.createDiv();
-    this.sidebarEl.style.cssText =
-      "width:220px;min-width:180px;border-right:1px solid var(--background-modifier-border);overflow-y:auto;padding-right:12px;";
+    this.sidebarEl.addClass("obsidian-goat-sync-conflict-sidebar");
 
     this.cardsEl = body.createDiv();
-    this.cardsEl.style.cssText = "flex:1;overflow-y:auto;";
+    this.cardsEl.addClass("obsidian-goat-sync-conflict-cards");
 
     const footer = contentEl.createDiv();
-    footer.style.cssText = "margin-top:12px;text-align:right;";
+    footer.addClass("obsidian-goat-sync-conflict-footer");
     const applyBtn = footer.createEl("button", { text: "Apply All" });
-    applyBtn.style.cssText = "padding:8px 20px;background:var(--interactive-accent);color:var(--text-on-accent);border:none;border-radius:6px;cursor:pointer;";
+    applyBtn.addClass("mod-cta");
     applyBtn.disabled = true;
     applyBtn.onclick = () => this.applyAll();
 
@@ -117,7 +115,7 @@ export class ConflictModal extends Modal {
     title.style.cssText = "margin-bottom:12px;font-size:14px;word-break:break-all;";
 
     const cardsRow = this.cardsEl.createDiv();
-    cardsRow.style.cssText = "display:flex;gap:12px;";
+    cardsRow.addClass("obsidian-goat-sync-conflict-card-row");
 
     const isDelete = entry.kind === "delete";
     const serverLabel = isDelete ? "SERVER (복구)" : "SERVER";
@@ -158,8 +156,8 @@ export class ConflictModal extends Modal {
     if (!isDelete) {
       const conflictPath = entry.conflictPath || entry.path;
       const newCard = cardsRow.createDiv();
-      newCard.style.cssText =
-        "flex:1;border:1px solid var(--background-modifier-border);border-radius:8px;padding:12px;cursor:pointer;";
+      newCard.addClass("obsidian-goat-sync-conflict-card");
+      newCard.addClass("obsidian-goat-sync-conflict-save-new");
       newCard.createEl("h4", { text: "SAVE AS NEW" }).style.cssText =
         "margin-bottom:8px;font-size:12px;color:var(--text-muted);";
       const pathEl = newCard.createEl("p", { text: conflictPath });
@@ -185,8 +183,7 @@ export class ConflictModal extends Modal {
     onClick: () => void,
   ): HTMLElement {
     const card = container.createDiv();
-    card.style.cssText =
-      "flex:1;border:1px solid var(--background-modifier-border);border-radius:8px;padding:12px;cursor:pointer;overflow:hidden;display:flex;flex-direction:column;";
+    card.addClass("obsidian-goat-sync-conflict-card");
 
     const header = card.createDiv();
     header.style.cssText = "display:flex;justify-content:space-between;margin-bottom:8px;";
@@ -203,7 +200,7 @@ export class ConflictModal extends Modal {
     }
 
     const preview = card.createDiv();
-    preview.style.cssText = "max-height:220px;overflow:auto;font-size:12px;flex:1;";
+    preview.addClass("obsidian-goat-sync-conflict-preview");
 
     this.renderPreviewInto(preview, content, encoding, path, hash);
 

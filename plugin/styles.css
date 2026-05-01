@@ -1,1 +1,99 @@
 /* plugin/styles.css */
+
+.modal:has(.obsidian-goat-sync-conflict-modal) {
+  width: min(1200px, 96vw);
+  max-width: 96vw;
+}
+
+.obsidian-goat-sync-conflict-modal {
+  display: flex;
+  flex-direction: column;
+  height: 86vh;
+  min-height: 520px;
+}
+
+.obsidian-goat-sync-conflict-title {
+  margin: 0 0 12px;
+}
+
+.obsidian-goat-sync-conflict-body {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 16px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.obsidian-goat-sync-conflict-sidebar {
+  width: 240px;
+  min-width: 190px;
+  border-right: 1px solid var(--background-modifier-border);
+  overflow-y: auto;
+  padding-right: 12px;
+}
+
+.obsidian-goat-sync-conflict-cards {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.obsidian-goat-sync-conflict-card-row {
+  display: flex;
+  gap: 12px;
+  min-height: 0;
+}
+
+.obsidian-goat-sync-conflict-card {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.obsidian-goat-sync-conflict-preview {
+  flex: 1 1 auto;
+  min-height: 460px;
+  overflow: auto;
+  font-size: 12px;
+}
+
+.obsidian-goat-sync-conflict-footer {
+  margin-top: 12px;
+  text-align: right;
+}
+
+@media (max-width: 900px) {
+  .obsidian-goat-sync-conflict-modal {
+    height: 86vh;
+    min-height: 420px;
+  }
+
+  .obsidian-goat-sync-conflict-body {
+    flex-direction: column;
+  }
+
+  .obsidian-goat-sync-conflict-sidebar {
+    width: auto;
+    min-width: 0;
+    max-height: 160px;
+    border-right: 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding-right: 0;
+    padding-bottom: 8px;
+  }
+
+  .obsidian-goat-sync-conflict-card-row {
+    flex-direction: column;
+  }
+
+  .obsidian-goat-sync-conflict-preview {
+    min-height: 260px;
+  }
+}

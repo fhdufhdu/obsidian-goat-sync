@@ -580,7 +580,7 @@ export class SyncManager {
   private async applyServerWinsLatestConflict(msg: ServerMessage): Promise<boolean> {
     if (!msg.path || !msg.conflict || !isServerWinsPath(msg.path)) return false;
 
-    if (msg.conflict.isDeleted || msg.action === "deleteConflict") {
+    if (msg.conflict.isDeleted) {
       await this.applyServerDelete(
         msg.path,
         msg.conflict.serverVersion,

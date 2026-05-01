@@ -347,6 +347,37 @@ describe("auto merge flow", () => {
     expect(harness.manager["openConflictModal"]).not.toHaveBeenCalled();
   });
 
+  test("fileDeleteResult restores obsidian settings delete conflict from active server version", async () => {
+    const serverHash = await sha256("server css");
+    const harness = await createSyncManagerHarness({
+      files: {},
+      meta: { ".obsidian/snippets/foo.css": { prevServerVersion: 2, prevServerHash: "old" } },
+      deleted: [{ path: ".obsidian/snippets/foo.css", baseVersion: 2, serverHash: "old" }],
+    });
+    harness.manager["openConflictModal"] = vi.fn();
+
+    await harness.manager["handleFileDeleteResult"]({
+      type: "fileDeleteResult",
+      path: ".obsidian/snippets/foo.css",
+      action: "deleteConflict",
+      conflict: {
+        serverVersion: 5,
+        serverHash,
+        serverContent: "server css",
+        isDeleted: false,
+      },
+    });
+
+    expect(await harness.adapter.read(".obsidian/snippets/foo.css")).toBe("server css");
+    expect(harness.fileMeta.get(".obsidian/snippets/foo.css")).toEqual({
+      prevServerVersion: 5,
+      prevServerHash: serverHash,
+    });
+    expect(harness.deleteQueue.get(".obsidian/snippets/foo.css")).toBeUndefined();
+    expect(harness.manager["conflictQueue"].get(".obsidian/snippets/foo.css")).toBeUndefined();
+    expect(harness.manager["openConflictModal"]).not.toHaveBeenCalled();
+  });
+
   test("fileDeleteResult applies obsidian settings delete conflict from server", async () => {
     const harness = await createSyncManagerHarness({
       files: { ".obsidian/snippets/foo.css": "local css" },
